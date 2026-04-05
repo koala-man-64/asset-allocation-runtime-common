@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asset-allocation-runtime-common"
+version = "0.1.0"
+description = "Shared transport-neutral runtime helpers for the Asset Allocation split repos."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "azure-identity==1.25.2",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.4.2",
+    "ruff==0.12.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["asset_allocation_runtime_common*"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F"]
+

@@ -1,0 +1,58 @@
+name: Runtime Common Security
+run-name: Runtime Common Security / ${{ github.event_name }} / ${{ github.ref_name }}
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-common-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-dependency-audit:
+    name: python-dependency-audit
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Audit Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          python - <<'PY' > artifacts/requirements-runtime.txt
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
+          for dependency in pyproject["project"].get("dependencies", []):
+              print(dependency)
+          PY
+          pip-audit -r artifacts/requirements-runtime.txt --format json -o artifacts/pip-audit-runtime.json || true
+          pip-audit --strict -r artifacts/requirements-runtime.txt
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: runtime-common-python-audit
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

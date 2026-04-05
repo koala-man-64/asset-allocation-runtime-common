@@ -1,0 +1,154 @@
+name: Runtime Common Release
+run-name: Runtime Common Release / ${{ github.event_name }} / ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runtime-common-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Resolve runtime-common version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' > version.txt
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
+          print(pyproject["project"]["version"])
+          PY
+          echo "runtime_common_version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Python distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/python
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+          python -m build python --sdist --wheel --outdir artifacts/python
+
+      - name: Publish Python package
+        env:
+          PYTHON_PUBLISH_REPOSITORY_URL: ${{ vars.PYTHON_PUBLISH_REPOSITORY_URL }}
+          PYTHON_PUBLISH_USERNAME: ${{ secrets.PYTHON_PUBLISH_USERNAME }}
+          PYTHON_PUBLISH_PASSWORD: ${{ secrets.PYTHON_PUBLISH_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${PYTHON_PUBLISH_REPOSITORY_URL:?Set repo variable PYTHON_PUBLISH_REPOSITORY_URL.}"
+          : "${PYTHON_PUBLISH_USERNAME:?Set secret PYTHON_PUBLISH_USERNAME.}"
+          : "${PYTHON_PUBLISH_PASSWORD:?Set secret PYTHON_PUBLISH_PASSWORD.}"
+          python -m twine upload \
+            --repository-url "${PYTHON_PUBLISH_REPOSITORY_URL}" \
+            -u "${PYTHON_PUBLISH_USERNAME}" \
+            -p "${PYTHON_PUBLISH_PASSWORD}" \
+            artifacts/python/*
+
+      - name: Write release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = {
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "git_sha": os.environ["GITHUB_SHA"],
+              "artifact_kind": "python-package",
+              "artifact_ref": sorted(p.name for p in Path("artifacts/python").iterdir()),
+              "version_matrix": {
+                  "runtime_common": os.environ["RUNTIME_COMMON_VERSION"],
+              },
+          }
+          Path("artifacts/release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+        env:
+          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: runtime-common-release
+          path: |
+            artifacts/python/*
+            artifacts/release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.DISPATCH_APP_ID }}
+          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Dispatch runtime-common release to consumers
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONTROL_PLANE_REPOSITORY: ${{ vars.CONTROL_PLANE_REPOSITORY }}
+          JOBS_REPOSITORY: ${{ vars.JOBS_REPOSITORY }}
+          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          control_plane_repo="${CONTROL_PLANE_REPOSITORY:-${owner}/asset-allocation-control-plane}"
+          jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"
+          for repo in "${control_plane_repo}" "${jobs_repo}"; do
+            gh api "repos/${repo}/dispatches" \
+              --method POST \
+              --input - <<EOF
+          {
+            "event_type": "runtime_common_released",
+            "client_payload": {
+              "runtime_common_version": "${RUNTIME_COMMON_VERSION}",
+              "runtime_common_ref": "${GITHUB_REF_NAME}",
+              "runtime_common_sha": "${GITHUB_SHA}",
+              "manifest_path": "release-manifest.json"
+            }
+          }
+          EOF
+          done
+
+      - name: Write release summary
+        env:
+          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+        shell: bash
+        run: |
+          {
+            echo "## Runtime-common release"
+            echo ""
+            echo "- Version: \`${RUNTIME_COMMON_VERSION}\`"
+            echo "- Ref: \`${GITHUB_REF_NAME}\`"
+            echo "- Manifest: \`artifacts/release-manifest.json\`"
+            echo "- Downstream dispatch: \`runtime_common_released\` to control-plane and jobs"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
