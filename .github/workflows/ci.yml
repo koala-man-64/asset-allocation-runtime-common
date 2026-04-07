@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e python[test]
+          python -m pip install -e 'python[test]'
           python -m pip check
 
       - name: Run ruff
@@ -76,4 +76,3 @@ jobs:
           path: artifacts/python/*
           if-no-files-found: error
           retention-days: 14
-
