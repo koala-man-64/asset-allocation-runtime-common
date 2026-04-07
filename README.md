@@ -19,6 +19,7 @@ python -m pytest .\tests\python -q
 
 ## Docs
 
+- [Architecture Contract](docs/architecture/architecture-contract.md)
 - [Boundary ADR](docs/architecture/adr-001-multirepo-boundaries.md)
 - [Ownership Map](docs/architecture/repo-ownership-map.md)
 - [Migration Ledger](docs/architecture/migration-ledger.md)
@@ -26,4 +27,3 @@ python -m pytest .\tests\python -q
 - [CI and Release Runbook](docs/ops/ci-release-runbook.md)
 - [Cutover and Rollback Runbook](docs/ops/cutover-rollback-runbook.md)
 - [Cutover Release Notes](docs/releases/cutover-release-notes.md)
-

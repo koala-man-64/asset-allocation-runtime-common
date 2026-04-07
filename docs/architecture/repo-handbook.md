@@ -1,5 +1,11 @@
 # Split Repo Handbook
 
+## Canonical Architecture Contract
+
+`docs/architecture/architecture-contract.md` is the canonical living contract for this repository. Use it as the primary reference for repo purpose, package boundaries, public runtime behavior, and future-agent guardrails.
+
+The other architecture docs in this folder remain authoritative as supporting evidence for specific decisions, ownership boundaries, and migration history. They do not replace the contract as the single source of truth for intended repository design.
+
 ## Local Development
 
 1. Publish or locally install `asset-allocation-contracts` and `asset-allocation-runtime-common`.
@@ -26,4 +32,3 @@
 - Any workflow that checks out a sibling repo for normal CI or release.
 - Any control-plane-owned domain accessed from jobs storage code.
 - Any tracked generated output or scratch artifact.
-
