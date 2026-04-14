@@ -181,7 +181,7 @@ jobs:
               throw "python/pyproject.toml was not updated to $nextVersion."
           }
 
-          $expectedContractLine = "| Canonical Baseline | `main` branch, package version `$nextVersion` in `python/pyproject.toml` |"
+          $expectedContractLine = '| Canonical Baseline | `main` branch, package version `{0}` in `python/pyproject.toml` |' -f $nextVersion
           if (-not $updatedContract.Contains($expectedContractLine)) {
               throw "docs/architecture/architecture-contract.md was not updated to $nextVersion."
           }
