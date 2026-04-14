@@ -49,6 +49,35 @@ Sync the documented variables and secrets to the current repository:
 
 Use `-DryRun` on either script to preview actions without writing the local file or changing GitHub settings.
 
+### Release prep flow
+
+When PyPI already has the current package version, bump the tracked release version references in this repo before rerunning `release.yml`.
+
+Preview the next version without writing files:
+
+```powershell
+.\scripts\prepare-release.ps1 -Version 0.1.1 -DryRun
+```
+
+Apply the version bump:
+
+```powershell
+.\scripts\prepare-release.ps1 -Version 0.1.1
+```
+
+The script updates only these tracked files:
+
+- `python/pyproject.toml`
+- `docs/architecture/architecture-contract.md`
+
+It does not create commits, create tags, dispatch workflows, touch generated packaging output, or edit downstream repos.
+
+After the script runs:
+
+1. Commit the version change.
+2. Rerun the `Runtime Common Release` workflow.
+3. Confirm the workflow publishes the new package version instead of retrying the old one.
+
 ## Consumer Expectations
 
 - Control-plane and jobs install `asset-allocation-runtime-common==<version>`.

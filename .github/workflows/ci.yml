@@ -61,6 +61,158 @@ jobs:
           set -euo pipefail
           python -m pytest tests/python -q
 
+      - name: Validate release prep script
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-StrictMode -Version Latest
+
+          function Get-CurrentVersion {
+              param([string]$Content)
+
+              $match = [regex]::Match($Content, '(?m)^version = "(?<version>\d+\.\d+\.\d+)"$')
+              if (-not $match.Success) {
+                  throw "Could not locate the package version in python/pyproject.toml."
+              }
+
+              return $match.Groups["version"].Value
+          }
+
+          function Get-NextPatchVersion {
+              param([string]$Version)
+
+              if ($Version -notmatch '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$') {
+                  throw "Current version '$Version' is not stable semver."
+              }
+
+              return "{0}.{1}.{2}" -f $matches["major"], $matches["minor"], ([int]$matches["patch"] + 1)
+          }
+
+          function Invoke-ExpectedFailure {
+              param(
+                  [string]$Label,
+                  [scriptblock]$Action,
+                  [string]$ExpectedMessage
+              )
+
+              try {
+                  & $Action
+              }
+              catch {
+                  if ($_.Exception.Message -notlike "*$ExpectedMessage*") {
+                      throw "$Label failed with an unexpected message: $($_.Exception.Message)"
+                  }
+
+                  return
+              }
+
+              throw "$Label succeeded unexpectedly."
+          }
+
+          $sourceRoot = $env:GITHUB_WORKSPACE
+          $tempRoot = Join-Path $env:RUNNER_TEMP "runtime-common-release-prep"
+          if (Test-Path -LiteralPath $tempRoot) {
+              Remove-Item -LiteralPath $tempRoot -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $tempRoot | Out-Null
+          $tempRepo = Join-Path $tempRoot "repo"
+          New-Item -ItemType Directory -Path $tempRepo | Out-Null
+          Get-ChildItem -LiteralPath $sourceRoot -Force |
+              Where-Object { $_.Name -ne ".git" } |
+              Copy-Item -Destination $tempRepo -Recurse -Force
+
+          $scriptPath = Join-Path $tempRepo "scripts/prepare-release.ps1"
+          $pyprojectPath = Join-Path $tempRepo "python/pyproject.toml"
+          $contractPath = Join-Path $tempRepo "docs/architecture/architecture-contract.md"
+          $expectedFiles = @(
+              "docs/architecture/architecture-contract.md",
+              "python/pyproject.toml"
+          )
+
+          $originalPyproject = Get-Content -LiteralPath $pyprojectPath -Raw
+          $originalContract = Get-Content -LiteralPath $contractPath -Raw
+          $currentVersion = Get-CurrentVersion -Content $originalPyproject
+          $nextVersion = Get-NextPatchVersion -Version $currentVersion
+
+          $dryRunOutput = @(& $scriptPath -Version $nextVersion -DryRun)
+          $reportedFiles = @(
+              $dryRunOutput |
+                  Where-Object { $_ -is [string] -and $_.StartsWith("- ") } |
+                  ForEach-Object { $_.Substring(2) } |
+                  Sort-Object -Unique
+          )
+          if (($reportedFiles -join ",") -ne ($expectedFiles -join ",")) {
+              throw "Dry run reported unexpected files: $($reportedFiles -join ', ')"
+          }
+
+          if ((Get-Content -LiteralPath $pyprojectPath -Raw) -ne $originalPyproject) {
+              throw "Dry run modified python/pyproject.toml."
+          }
+
+          if ((Get-Content -LiteralPath $contractPath -Raw) -ne $originalContract) {
+              throw "Dry run modified docs/architecture/architecture-contract.md."
+          }
+
+          Set-Item -Path function:Read-Host -Value { param([string]$Prompt) $nextVersion }
+          try {
+              $promptDryRunOutput = @(& $scriptPath -DryRun)
+          }
+          finally {
+              Remove-Item -Path function:Read-Host -ErrorAction SilentlyContinue
+          }
+          if ($promptDryRunOutput.Count -lt 1 -or $promptDryRunOutput[0] -ne "Current version: $currentVersion") {
+              throw "Prompt mode did not print the current version before prompting."
+          }
+
+          & $scriptPath -Version $nextVersion
+
+          $updatedPyproject = Get-Content -LiteralPath $pyprojectPath -Raw
+          $updatedContract = Get-Content -LiteralPath $contractPath -Raw
+          if ($updatedPyproject -eq $originalPyproject) {
+              throw "Apply mode did not rewrite python/pyproject.toml."
+          }
+
+          if ($updatedContract -eq $originalContract) {
+              throw "Apply mode did not rewrite docs/architecture/architecture-contract.md."
+          }
+
+          if (-not $updatedPyproject.Contains("version = ""$nextVersion""")) {
+              throw "python/pyproject.toml was not updated to $nextVersion."
+          }
+
+          $expectedContractLine = "| Canonical Baseline | `main` branch, package version `$nextVersion` in `python/pyproject.toml` |"
+          if (-not $updatedContract.Contains($expectedContractLine)) {
+              throw "docs/architecture/architecture-contract.md was not updated to $nextVersion."
+          }
+
+          Invoke-ExpectedFailure -Label "invalid version" -ExpectedMessage "must match stable semver" -Action {
+              & $scriptPath -Version "1.2"
+          }
+
+          Invoke-ExpectedFailure -Label "unchanged version" -ExpectedMessage "matches the current package version" -Action {
+              & $scriptPath -Version $nextVersion
+          }
+
+          $brokenRepo = Join-Path $tempRoot "broken-repo"
+          New-Item -ItemType Directory -Path $brokenRepo | Out-Null
+          Get-ChildItem -LiteralPath $tempRepo -Force |
+              Copy-Item -Destination $brokenRepo -Recurse -Force
+          $brokenContractPath = Join-Path $brokenRepo "docs/architecture/architecture-contract.md"
+          $brokenContract = (Get-Content -LiteralPath $brokenContractPath -Raw).Replace(
+              $expectedContractLine,
+              "| Canonical Baseline | release baseline missing |"
+          )
+          [System.IO.File]::WriteAllText(
+              $brokenContractPath,
+              $brokenContract,
+              [System.Text.UTF8Encoding]::new($false)
+          )
+
+          Invoke-ExpectedFailure -Label "missing replacement target" -ExpectedMessage "Expected exactly one architecture contract canonical baseline line target" -Action {
+              & (Join-Path $brokenRepo "scripts/prepare-release.ps1") -Version (Get-NextPatchVersion -Version $nextVersion)
+          }
+
       - name: Build Python distributions
         shell: bash
         run: |
