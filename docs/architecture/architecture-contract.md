@@ -6,9 +6,9 @@
 | --- | --- |
 | Status | Active |
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
-| Canonical Baseline | `main` branch, package version `1.0.0` in `python/pyproject.toml` |
+| Canonical Baseline | `main` branch, package version `1.0.2` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
-| Last Reviewed | 2026-04-06 |
+| Last Reviewed | 2026-04-17 |
 | Change Class | Decision Capture |
 
 Evidence status used in this document:
@@ -244,7 +244,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Version Pinning
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, but that pin must track the latest stable published contracts release rather than a manually curated lagging version.
 
 **Why**
 
@@ -521,7 +521,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts` and expects that pin to match the latest stable published contracts release. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -557,7 +557,7 @@ Reducing this validation weakens confidence in the published artifact and must b
 ### Release and Downstream Dispatch Behavior
 **Contract**
 
-Tagged releases build and publish the Python package, write `artifacts/release-manifest.json`, and dispatch `runtime_common_released` to control-plane and jobs. Consumer repos are expected to pin exact versions and record them in their release manifests.
+The manually dispatched release workflow runs from `main`, determines whether the tracked package version can be reused or must be bumped according to the requested semver increment, updates the tracked release baseline when needed, creates the release tag, builds and publishes the Python package, writes `artifacts/release-manifest.json`, and dispatches `runtime_common_released` to control-plane and jobs. Consumer repos are expected to pin exact versions and record them in their release manifests.
 
 **Why**
 
@@ -577,7 +577,7 @@ Release-contract changes affect downstream upgrade flow, rollback flow, and arti
 ### Security and Dependency Audit Posture
 **Contract**
 
-The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule.
+The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, opens or updates a PR, and leaves the workflow red if the new pin breaks validation. CI and security workflows hard-fail whenever `python/pyproject.toml` is behind the latest stable published contracts release.
 
 **Why**
 
@@ -777,6 +777,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 | 2026-04-06 | Treat the public export list in `python/asset_allocation_runtime_common/__init__.py` as the default published API boundary for this package. | 5, 7, 9 | Active |
 | 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with current backtest lifecycle calls recorded as the sole explicit write exception pending future confirmation. | 4, 6, 7, 10 | Active |
 | 2026-04-06 | Require this contract to be updated in the same change set as any public behavior or boundary change. | 9, 13 | Active |
+| 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance that pin to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Active |
 
 ## 12. Evidence Ledger
 
@@ -811,6 +812,7 @@ Test evidence:
 
 Workflow evidence:
 - `.github/workflows/ci.yml`
+- `.github/workflows/refresh-contracts-pin.yml`
 - `.github/workflows/release.yml`
 - `.github/workflows/security.yml`
 - `.github/CODEOWNERS`
