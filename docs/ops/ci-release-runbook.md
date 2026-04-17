@@ -5,16 +5,25 @@
 - `ci.yml` is the required gate for PRs and `main`.
 - CI must install the package from the repo itself and run tests without any sibling checkout.
 - CI also verifies the package can build a wheel and sdist.
+- CI hard-fails when `python/pyproject.toml` pins `asset-allocation-contracts` to anything other than the latest stable published version.
+
+### Contracts pin refresh
+
+- `refresh-contracts-pin.yml` runs on weekdays and manual dispatch.
+- It rewrites `asset-allocation-contracts` in `python/pyproject.toml` to the latest stable published version, pushes a long-lived refresh branch, and opens or updates a PR.
+- The workflow runs install, `pip check`, `ruff`, and `pytest` against the refreshed pin. It still updates the PR branch even if validation fails, then fails the workflow so the break is visible and must be fixed forward.
+- `security.yml` enforces the same latest-stable contracts pin rule as `ci.yml` before running `pip-audit`.
 
 ## Release
 
-- `release.yml` publishes the Python package and writes `artifacts/release-manifest.json`.
+- `release.yml` is a manually dispatched workflow that releases from `main`.
+- It reuses an already-prepared release version when possible; otherwise it bumps the requested semver segment, updates the tracked release files, commits the bump, creates the release tag, publishes the Python package, and writes `artifacts/release-manifest.json`.
 - The release workflow dispatches `runtime_common_released` to control-plane and jobs.
 - Consumer repos should validate the new version through their compatibility workflows before production rollout.
 
 ### GitHub configuration bootstrap
 
-The release workflow requires these repository-scoped GitHub settings:
+The release workflow and contracts-pin refresh workflow require these repository-scoped GitHub settings:
 
 - Variables: `CONTROL_PLANE_REPOSITORY`, `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
 - Secrets: `DISPATCH_APP_PRIVATE_KEY`, `PYTHON_PUBLISH_USERNAME`, `PYTHON_PUBLISH_PASSWORD`
@@ -49,34 +58,40 @@ Sync the documented variables and secrets to the current repository:
 
 Use `-DryRun` on either script to preview actions without writing the local file or changing GitHub settings.
 
-### Release prep flow
+### Release flow
 
-When PyPI already has the current package version, bump the tracked release version references in this repo before rerunning `release.yml`.
+Dispatch `Runtime Common Release` from `main` and choose the semver increment the workflow should apply if it needs to create a new version:
 
-Preview the next version without writing files:
+- `patch` for internal fixes with no consumer-visible contract change
+- `minor` for additive compatible surface changes
+- `major` for breaking contract changes
+
+If the tracked version in `python/pyproject.toml` is already ahead of PyPI, or if `main` is already tagged for that exact version, the workflow reuses it instead of bumping again. Uploads use `twine --skip-existing`, so reruns can recover from partial failures without tripping on duplicate-file errors.
+
+When the workflow needs a new release version, it updates only these tracked files before tagging and publishing:
+
+- `python/pyproject.toml`
+- `docs/architecture/architecture-contract.md`
+
+### Local release metadata preview
+
+`scripts/prepare-release.ps1` remains the tracked-file updater used by the workflow. Use it locally only to preview or debug the release metadata change.
+
+Preview the next version locally without writing files:
 
 ```powershell
 .\scripts\prepare-release.ps1 -Version 0.1.1 -DryRun
 ```
 
-Apply the version bump:
+Apply the version bump locally:
 
 ```powershell
 .\scripts\prepare-release.ps1 -Version 0.1.1
 ```
 
-The script updates only these tracked files:
-
-- `python/pyproject.toml`
-- `docs/architecture/architecture-contract.md`
-
 It does not create commits, create tags, dispatch workflows, touch generated packaging output, or edit downstream repos.
 
-After the script runs:
-
-1. Commit the version change.
-2. Rerun the `Runtime Common Release` workflow.
-3. Confirm the workflow publishes the new package version instead of retrying the old one.
+After a local dry-run or debug run, discard or keep the file changes intentionally before running `Runtime Common Release`. The normal operator flow is to let the workflow own the bump, commit, tag, publish, and downstream dispatch.
 
 ## Consumer Expectations
 

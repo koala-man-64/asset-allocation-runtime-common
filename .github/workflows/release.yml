@@ -2,17 +2,24 @@ name: Runtime Common Release
 run-name: Runtime Common Release / ${{ github.event_name }} / ${{ github.ref_name }}
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      release_bump:
+        description: Semantic version increment to apply when the tracked version is already published.
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
-  group: runtime-common-release-${{ github.ref }}
+  group: runtime-common-release-main
   cancel-in-progress: false
 
 jobs:
@@ -22,25 +29,212 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: refs/heads/main
+
+      - name: Validate release source branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" != "branch" ] || [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Runtime-common releases must be dispatched from the main branch." >&2
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.14"
 
-      - name: Resolve runtime-common version
-        id: version
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.DISPATCH_APP_ID }}
+          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Configure release git identity
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY' > version.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Resolve release plan
+        id: release-plan
+        env:
+          PYTHON_PUBLISH_REPOSITORY_URL: ${{ vars.PYTHON_PUBLISH_REPOSITORY_URL }}
+          RELEASE_BUMP: ${{ inputs.release_bump }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
           import tomllib
+          import urllib.error
+          import urllib.parse
+          import urllib.request
           from pathlib import Path
 
+          SEMVER = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+
+          def parse_semver(value: str) -> tuple[int, int, int]:
+              match = SEMVER.fullmatch(value)
+              if not match:
+                  raise SystemExit(f"Version '{value}' is not stable semver.")
+              return tuple(int(match.group(key)) for key in ("major", "minor", "patch"))
+
+          def bump_semver(value: str, kind: str) -> str:
+              major, minor, patch = parse_semver(value)
+              if kind == "major":
+                  return f"{major + 1}.0.0"
+              if kind == "minor":
+                  return f"{major}.{minor + 1}.0"
+              if kind == "patch":
+                  return f"{major}.{minor}.{patch + 1}"
+              raise SystemExit(f"Unsupported release bump kind '{kind}'.")
+
+          def git(*args: str) -> str:
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          def resolve_registry_json_url(upload_url: str, package_name: str) -> str | None:
+              host = urllib.parse.urlparse(upload_url).netloc.lower()
+              if host == "upload.pypi.org":
+                  return f"https://pypi.org/pypi/{urllib.parse.quote(package_name)}/json"
+              if host == "test.pypi.org":
+                  return f"https://test.pypi.org/pypi/{urllib.parse.quote(package_name)}/json"
+              return None
+
           pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
-          print(pyproject["project"]["version"])
+          package_name = pyproject["project"]["name"]
+          source_version = pyproject["project"]["version"]
+          release_bump = os.environ["RELEASE_BUMP"]
+
+          if not SEMVER.fullmatch(source_version):
+              raise SystemExit(f"Current package version '{source_version}' is not stable semver.")
+
+          registry_versions: set[str] = set()
+          latest_published_version = ""
+          registry_json_url = resolve_registry_json_url(
+              os.environ["PYTHON_PUBLISH_REPOSITORY_URL"],
+              package_name,
+          )
+          if registry_json_url:
+              try:
+                  with urllib.request.urlopen(registry_json_url, timeout=30) as response:
+                      payload = json.load(response)
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404:
+                      raise
+              else:
+                  registry_versions = {
+                      version
+                      for version in payload.get("releases", {})
+                      if SEMVER.fullmatch(version)
+                  }
+                  if registry_versions:
+                      latest_published_version = max(registry_versions, key=parse_semver)
+
+          stable_tags = sorted(
+              (
+                  tag[1:],
+                  tag,
+              )
+              for tag in git("tag", "--list", "v*").splitlines()
+              if tag and SEMVER.fullmatch(tag[1:])
+          )
+          latest_tag_version = stable_tags[-1][0] if stable_tags else ""
+          head_tags = {tag for tag in git("tag", "--points-at", "HEAD").splitlines() if tag}
+          current_tag = f"v{source_version}"
+          current_is_published = source_version in registry_versions
+          source_is_ahead_of_registry = (
+              not latest_published_version
+              or parse_semver(source_version) > parse_semver(latest_published_version)
+          )
+
+          if current_is_published and current_tag not in head_tags:
+              base_version = source_version
+              for candidate in (latest_tag_version, latest_published_version):
+                  if candidate and parse_semver(candidate) > parse_semver(base_version):
+                      base_version = candidate
+              runtime_common_version = bump_semver(base_version, release_bump)
+              release_action = "bump"
+          elif source_is_ahead_of_registry:
+              runtime_common_version = source_version
+              release_action = "reuse"
+          else:
+              runtime_common_version = bump_semver(source_version, release_bump)
+              release_action = "bump"
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as stream:
+              stream.write(f"source_version={source_version}\n")
+              stream.write(f"runtime_common_version={runtime_common_version}\n")
+              stream.write(f"release_action={release_action}\n")
+              stream.write(f"latest_published_version={latest_published_version}\n")
+              stream.write(f"latest_tag_version={latest_tag_version}\n")
+
+          print(f"Source version: {source_version}")
+          print(f"Planned version: {runtime_common_version}")
+          print(f"Release action: {release_action}")
+          if latest_published_version:
+              print(f"Latest published version: {latest_published_version}")
+          if latest_tag_version:
+              print(f"Latest git tag version: {latest_tag_version}")
           PY
-          echo "runtime_common_version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Apply tracked release version bump
+        if: steps.release-plan.outputs.release_action == 'bump'
+        shell: pwsh
+        env:
+          TARGET_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-StrictMode -Version Latest
+          ./scripts/prepare-release.ps1 -Version $env:TARGET_VERSION
+
+      - name: Commit tracked release version bump
+        if: steps.release-plan.outputs.release_action == 'bump'
+        env:
+          TARGET_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add python/pyproject.toml docs/architecture/architecture-contract.md
+          git commit -m "chore(release): bump runtime-common version to ${TARGET_VERSION}"
+          git push origin HEAD:main
+
+      - name: Create or verify release tag
+        id: release-ref
+        env:
+          TARGET_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_ref_name="v${TARGET_VERSION}"
+          release_git_sha="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/${release_ref_name}" >/dev/null; then
+            existing_tag_sha="$(git rev-list -n 1 "${release_ref_name}")"
+            if [ "${existing_tag_sha}" != "${release_git_sha}" ]; then
+              echo "Tag ${release_ref_name} already exists on ${existing_tag_sha}, expected ${release_git_sha}." >&2
+              exit 1
+            fi
+          else
+            git tag "${release_ref_name}"
+            git push origin "refs/tags/${release_ref_name}"
+          fi
+          {
+            echo "release_git_sha=${release_git_sha}"
+            echo "release_ref_name=${release_ref_name}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build Python distributions
         shell: bash
@@ -50,6 +244,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install build twine
           python -m build python --sdist --wheel --outdir artifacts/python
+          python -m twine check artifacts/python/*
 
       - name: Publish Python package
         env:
@@ -64,6 +259,7 @@ jobs:
           : "${PYTHON_PUBLISH_PASSWORD:?Set secret PYTHON_PUBLISH_PASSWORD.}"
           python -m twine upload \
             --repository-url "${PYTHON_PUBLISH_REPOSITORY_URL}" \
+            --skip-existing \
             -u "${PYTHON_PUBLISH_USERNAME}" \
             -p "${PYTHON_PUBLISH_PASSWORD}" \
             artifacts/python/*
@@ -80,7 +276,7 @@ jobs:
 
           manifest = {
               "repo": os.environ["GITHUB_REPOSITORY"],
-              "git_sha": os.environ["GITHUB_SHA"],
+              "git_sha": os.environ["RELEASE_GIT_SHA"],
               "artifact_kind": "python-package",
               "artifact_ref": sorted(p.name for p in Path("artifacts/python").iterdir()),
               "version_matrix": {
@@ -90,7 +286,8 @@ jobs:
           Path("artifacts/release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
           PY
         env:
-          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+          RELEASE_GIT_SHA: ${{ steps.release-ref.outputs.release_git_sha }}
+          RUNTIME_COMMON_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -102,20 +299,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-        with:
-          app-id: ${{ vars.DISPATCH_APP_ID }}
-          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
       - name: Dispatch runtime-common release to consumers
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           CONTROL_PLANE_REPOSITORY: ${{ vars.CONTROL_PLANE_REPOSITORY }}
           JOBS_REPOSITORY: ${{ vars.JOBS_REPOSITORY }}
-          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+          RELEASE_GIT_SHA: ${{ steps.release-ref.outputs.release_git_sha }}
+          RELEASE_REF_NAME: ${{ steps.release-ref.outputs.release_ref_name }}
+          RUNTIME_COMMON_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -130,8 +321,8 @@ jobs:
             "event_type": "runtime_common_released",
             "client_payload": {
               "runtime_common_version": "${RUNTIME_COMMON_VERSION}",
-              "runtime_common_ref": "${GITHUB_REF_NAME}",
-              "runtime_common_sha": "${GITHUB_SHA}",
+              "runtime_common_ref": "${RELEASE_REF_NAME}",
+              "runtime_common_sha": "${RELEASE_GIT_SHA}",
               "manifest_path": "release-manifest.json"
             }
           }
@@ -140,15 +331,17 @@ jobs:
 
       - name: Write release summary
         env:
-          RUNTIME_COMMON_VERSION: ${{ steps.version.outputs.runtime_common_version }}
+          RELEASE_ACTION: ${{ steps.release-plan.outputs.release_action }}
+          RELEASE_REF_NAME: ${{ steps.release-ref.outputs.release_ref_name }}
+          RUNTIME_COMMON_VERSION: ${{ steps.release-plan.outputs.runtime_common_version }}
         shell: bash
         run: |
           {
             echo "## Runtime-common release"
             echo ""
+            echo "- Release action: \`${RELEASE_ACTION}\`"
             echo "- Version: \`${RUNTIME_COMMON_VERSION}\`"
-            echo "- Ref: \`${GITHUB_REF_NAME}\`"
+            echo "- Ref: \`${RELEASE_REF_NAME}\`"
             echo "- Manifest: \`artifacts/release-manifest.json\`"
             echo "- Downstream dispatch: \`runtime_common_released\` to control-plane and jobs"
           } >> "${GITHUB_STEP_SUMMARY}"
-
