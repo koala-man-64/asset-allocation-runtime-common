@@ -56,3 +56,31 @@ def test_run_lifecycle_calls_expected_internal_paths() -> None:
         ("POST", "/api/internal/backtests/runs/run-123/fail"),
     ]
 
+
+def test_reconcile_runs_returns_typed_contract_payload() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/internal/backtests/runs/reconcile"
+        return httpx.Response(
+            200,
+            json={
+                "dispatchedCount": 1,
+                "dispatchFailedCount": 0,
+                "failedStaleRunningCount": 0,
+                "skippedActiveCount": 2,
+                "noActionCount": 0,
+                "dispatchedRunIds": ["run-1"],
+                "dispatchFailedRunIds": [],
+                "failedRunIds": [],
+            },
+        )
+
+    transport = _build_transport(handler)
+    try:
+        repo = BacktestRepository(transport=transport)
+        result = repo.reconcile_runs()
+    finally:
+        transport.close()
+
+    assert result.dispatchedCount == 1
+    assert result.dispatchedRunIds == ["run-1"]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from asset_allocation_contracts.backtest import BacktestReconcileResponse
+
 from asset_allocation_runtime_common.control_plane_transport import ControlPlaneRequestError, ControlPlaneTransport
 
 
@@ -64,3 +66,8 @@ class BacktestRepository:
             json_body={"error": error},
         )
 
+    def reconcile_runs(self) -> BacktestReconcileResponse:
+        payload = self.transport.request_json("POST", "/api/internal/backtests/runs/reconcile")
+        if not isinstance(payload, dict):
+            raise ValueError("Backtest reconcile response was not a JSON object.")
+        return BacktestReconcileResponse.model_validate(payload)
