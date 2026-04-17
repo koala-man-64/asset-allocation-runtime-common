@@ -1,4 +1,8 @@
 from asset_allocation_runtime_common.api_gateway_auth import build_access_token_provider
+from asset_allocation_runtime_common.backtest_results import (
+    BACKTEST_RESULTS_SCHEMA_VERSION,
+    persist_backtest_results,
+)
 from asset_allocation_runtime_common.backtest_repository import BacktestRepository
 from asset_allocation_runtime_common.control_plane_transport import (
     ControlPlaneRequestError,
@@ -15,6 +19,7 @@ from asset_allocation_runtime_common.universe_repository import UniverseReposito
 
 __all__ = [
     "BacktestRepository",
+    "BACKTEST_RESULTS_SCHEMA_VERSION",
     "ControlPlaneRequestError",
     "ControlPlaneTransport",
     "ControlPlaneTransportConfig",
@@ -24,4 +29,5 @@ __all__ = [
     "UniverseRepository",
     "build_access_token_provider",
     "normalize_strategy_config_document",
+    "persist_backtest_results",
 ]

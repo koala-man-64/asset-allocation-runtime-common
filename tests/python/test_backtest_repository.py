@@ -33,10 +33,10 @@ def test_claim_next_run_unwraps_run_payload() -> None:
 
 
 def test_run_lifecycle_calls_expected_internal_paths() -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str | None]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((request.method, request.url.path))
+        calls.append((request.method, request.url.path, request.content.decode("utf-8") or None))
         return httpx.Response(204, content=b"")
 
     transport = _build_transport(handler)
@@ -44,16 +44,16 @@ def test_run_lifecycle_calls_expected_internal_paths() -> None:
         repo = BacktestRepository(transport=transport)
         repo.start_run("run-123", execution_name="worker-01")
         repo.update_heartbeat("run-123")
-        repo.complete_run("run-123", summary={"sharpe": 1.2}, artifact_manifest_path="backtests/run-123/manifest.json")
+        repo.complete_run("run-123", summary={"sharpe": 1.2})
         repo.fail_run("run-123", error="boom")
     finally:
         transport.close()
 
     assert calls == [
-        ("POST", "/api/internal/backtests/runs/run-123/start"),
-        ("POST", "/api/internal/backtests/runs/run-123/heartbeat"),
-        ("POST", "/api/internal/backtests/runs/run-123/complete"),
-        ("POST", "/api/internal/backtests/runs/run-123/fail"),
+        ("POST", "/api/internal/backtests/runs/run-123/start", '{"executionName":"worker-01"}'),
+        ("POST", "/api/internal/backtests/runs/run-123/heartbeat", None),
+        ("POST", "/api/internal/backtests/runs/run-123/complete", '{"summary":{"sharpe":1.2}}'),
+        ("POST", "/api/internal/backtests/runs/run-123/fail", '{"error":"boom"}'),
     ]
 
 

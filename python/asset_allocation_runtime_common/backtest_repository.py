@@ -48,15 +48,11 @@ class BacktestRepository:
         run_id: str,
         *,
         summary: dict[str, Any] | None = None,
-        artifact_manifest_path: str | None = None,
     ) -> None:
         self.transport.request_json(
             "POST",
             f"/api/internal/backtests/runs/{run_id}/complete",
-            json_body={
-                "summary": summary or {},
-                "artifactManifestPath": artifact_manifest_path,
-            },
+            json_body={"summary": summary or {}},
         )
 
     def fail_run(self, run_id: str, *, error: str) -> None:
