@@ -43,7 +43,6 @@ def verify_pinned_dependency(spec: str) -> None:
                 download_dir,
                 "--disable-pip-version-check",
                 "--no-deps",
-                "--pre",
                 spec,
             ],
             capture_output=True,
