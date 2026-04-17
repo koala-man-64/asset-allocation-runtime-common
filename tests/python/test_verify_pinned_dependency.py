@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def load_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    module_path = repo_root / "scripts" / "verify_pinned_dependency.py"
+    spec = importlib.util.spec_from_file_location("verify_pinned_dependency", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MODULE = load_module()
+
+
+def test_load_pinned_dependency_returns_exact_spec(tmp_path: Path) -> None:
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        """
+[project]
+dependencies = [
+    "azure-identity==1.25.2",
+    "asset-allocation-contracts==2026.4.17-dev.10001",
+]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        MODULE.load_pinned_dependency(pyproject_path, "asset-allocation-contracts")
+        == "asset-allocation-contracts==2026.4.17-dev.10001"
+    )
+
+
+def test_verify_pinned_dependency_uses_pip_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        assert capture_output is True
+        assert text is True
+        assert check is False
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+
+    MODULE.verify_pinned_dependency("asset-allocation-contracts==2026.4.17-dev.10001")
+
+    assert captured["args"][:4] == [sys.executable, "-m", "pip", "download"]
+    assert "--pre" in captured["args"]
+    assert "asset-allocation-contracts==2026.4.17-dev.10001" in captured["args"]
+
+
+def test_verify_pinned_dependency_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(args: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=1,
+            stdout="",
+            stderr="ERROR: No matching distribution found",
+        )
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Publish the shared package first"):
+        MODULE.verify_pinned_dependency("asset-allocation-contracts==2026.4.17-dev.10001")

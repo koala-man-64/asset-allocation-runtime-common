@@ -41,11 +41,17 @@ jobs:
           cache-dependency-path: |
             python/pyproject.toml
 
-      - name: Install test dependencies
+      - name: Verify pinned contracts package is published
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
+          python scripts/verify_pinned_dependency.py --package asset-allocation-contracts
+
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           python -m pip install -e 'python[test]'
           python -m pip check
 
