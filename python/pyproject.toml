@@ -4,15 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation-runtime-common"
-version = "1.0.2"
-description = "Shared transport-neutral runtime helpers for the Asset Allocation split repos."
+version = "2.0.0"
+description = "Shared backend foundations, provider adapters, market-data helpers, and runtime clients for the Asset Allocation split repos."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "asset-allocation-contracts==1.2.0",
+    "azure-storage-blob==12.28.0",
     "azure-identity==1.25.2",
+    "deltalake==1.4.2",
     "httpx==0.28.1",
+    "nasdaq-data-link==1.0.4",
+    "numpy==2.3.5",
+    "pandas==2.3.3",
     "psycopg==3.3.3",
+    "pydantic==2.12.5",
+    "pydantic-settings==2.13.1",
+    "python-dotenv==1.2.1",
+    "requests==2.33.0",
 ]
 
 [project.optional-dependencies]

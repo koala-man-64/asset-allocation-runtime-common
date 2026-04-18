@@ -36,6 +36,50 @@ class RankingRepository:
             raise
         return payload if isinstance(payload, dict) else None
 
+    def claim_next_refresh(self, *, execution_name: str | None = None) -> dict[str, Any] | None:
+        payload = self.transport.request_json(
+            "POST",
+            "/api/internal/rankings/refresh/claim",
+            json_body={"executionName": execution_name},
+        )
+        if isinstance(payload, dict):
+            work = payload.get("work")
+            if isinstance(work, dict):
+                return work
+        return None
+
+    def complete_refresh(
+        self,
+        strategy_name: str,
+        *,
+        claim_token: str,
+        run_id: str | None = None,
+        dependency_fingerprint: str | None = None,
+        dependency_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = self.transport.request_json(
+            "POST",
+            f"/api/internal/rankings/refresh/{strategy_name}/complete",
+            json_body={
+                "claimToken": claim_token,
+                "runId": run_id,
+                "dependencyFingerprint": dependency_fingerprint,
+                "dependencyState": dependency_state,
+            },
+        )
+        return payload if isinstance(payload, dict) else {}
+
+    def fail_refresh(self, strategy_name: str, *, claim_token: str, error: str) -> dict[str, Any]:
+        payload = self.transport.request_json(
+            "POST",
+            f"/api/internal/rankings/refresh/{strategy_name}/fail",
+            json_body={
+                "claimToken": claim_token,
+                "error": error,
+            },
+        )
+        return payload if isinstance(payload, dict) else {}
+
     def save_ranking_schema(self, *args, **kwargs) -> None:
         raise NotImplementedError("Jobs repo does not mutate ranking control-plane state directly.")
 

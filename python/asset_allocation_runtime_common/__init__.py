@@ -11,6 +11,7 @@ from asset_allocation_runtime_common.control_plane_transport import (
 )
 from asset_allocation_runtime_common.ranking_repository import RankingRepository
 from asset_allocation_runtime_common.regime_repository import RegimeRepository
+from asset_allocation_runtime_common.results_repository import ResultsRepository
 from asset_allocation_runtime_common.strategy_repository import (
     StrategyRepository,
     normalize_strategy_config_document,
@@ -25,6 +26,7 @@ __all__ = [
     "ControlPlaneTransportConfig",
     "RankingRepository",
     "RegimeRepository",
+    "ResultsRepository",
     "StrategyRepository",
     "UniverseRepository",
     "build_access_token_provider",

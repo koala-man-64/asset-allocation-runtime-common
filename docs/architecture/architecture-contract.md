@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Active |
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
-| Canonical Baseline | `main` branch, package version `1.0.2` in `python/pyproject.toml` |
+| Canonical Baseline | `main` branch, package version `2.0.0` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
 | Last Reviewed | 2026-04-17 |
 | Change Class | Decision Capture |
@@ -20,7 +20,7 @@ Evidence status used in this document:
 
 This document is the authoritative architecture and functionality contract for `asset-allocation-runtime-common`. It defines what this repository exists to do, what it must keep doing, what it must not absorb, and how future changes are expected to preserve package behavior for its consumers.
 
-This repository is a versioned Python package. It is not a deployable service, a job runner, a database layer, or an infrastructure repo. Its scope is the shared runtime client layer consumed by the split Asset Allocation Python runtimes. Supporting docs such as the boundary ADR, ownership map, migration ledger, runbooks, and release notes remain valid, but they are supporting evidence rather than peer authorities.
+This repository is a versioned Python package. It is not a deployable service, a control-plane API repo, a jobs scheduler, or an infrastructure repo. Its scope is the shared backend package consumed by the split Asset Allocation Python runtimes: foundation modules, provider adapters, market-data helpers, extracted backtesting helpers, shared runtime repositories, transport/auth, and pure transforms. Supporting docs such as the boundary ADR, ownership map, migration ledger, runbooks, and release notes remain valid, but they are supporting evidence rather than peer authorities.
 
 ## 2. Why This Repo Exists
 
@@ -31,7 +31,7 @@ The split Asset Allocation system uses five repositories:
 - `asset-allocation-jobs`
 - `asset-allocation-ui`
 
-`asset-allocation-runtime-common` exists because `asset-allocation-control-plane` and `asset-allocation-jobs` had already diverged while still carrying duplicate copies of backend client logic. The intended design is to centralize only the narrow shared runtime layer here: managed-identity token acquisition, control-plane HTTP transport, read-only client repositories for control-plane-owned state, and pure normalization helpers. This reduces drift without turning shared backend code into a generic dumping ground.
+`asset-allocation-runtime-common` exists because `asset-allocation-control-plane` and `asset-allocation-jobs` had already diverged while still carrying duplicate copies of backend runtime logic. The intended design is to centralize the real shared backend layer here: managed-identity token acquisition, control-plane HTTP transport, shared runtime repositories, storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and pure normalization helpers. This reduces drift without transferring control-plane authority or jobs entrypoints into a generic shared service.
 
 ## 3. System Context and External Boundaries
 
@@ -40,7 +40,7 @@ This package sits between the two Python runtime repos and the control-plane HTT
 1. Consumer code in `asset-allocation-control-plane` or `asset-allocation-jobs` installs a pinned version of this package.
 2. Consumer code instantiates transport and repository objects from this package.
 3. This package acquires a managed-identity bearer token, constructs HTTP requests to the control-plane internal API, and returns JSON payloads or raises a transport error.
-4. This package does not persist state locally and does not own runtime orchestration.
+4. This package may contain shared persistence and provider helpers, but it does not own control-plane API routes, repo-local authority over DB-backed state, or jobs scheduling entrypoints.
 
 Boundary summary:
 
@@ -48,22 +48,22 @@ Boundary summary:
 | --- | --- |
 | `asset-allocation-contracts` | Peer shared package for cross-language contracts; not owned here |
 | `asset-allocation-control-plane` | Downstream consumer and canonical owner of control-plane state and internal API behavior |
-| `asset-allocation-jobs` | Downstream consumer that reads control-plane-owned state through this package |
+| `asset-allocation-jobs` | Downstream consumer that installs this package for shared backend foundations and runtime state access |
 | `asset-allocation-ui` | Separate repo; not a consumer of this Python package |
 | Control-plane internal HTTP API | Trust boundary crossed by this package via `httpx` and bearer authentication |
 
-This repository explicitly does not own Postgres repositories, provider adapters, monitoring collectors, deploy manifests, or job orchestration.
+This repository explicitly does not own control-plane API routes, control-plane authority over DB-backed state, monitoring ownership, deploy manifests, or jobs scheduling entrypoints.
 
 ## 4. Architectural Principles and Invariants
 
-### Narrow Shared Runtime Boundary
+### Shared Backend Boundary
 **Contract**
 
-This repository must remain a narrow shared runtime package. Code added here must exist to preserve a real shared runtime invariant across Python consumers. It must not become a general-purpose helper bucket.
+This repository must remain the shared backend package for Python consumers. Code added here must preserve a real shared backend invariant across at least two Python repos. It must not become a general-purpose helper bucket or a shadow control-plane/jobs runtime.
 
 **Why**
 
-The package exists to remove duplicated backend client logic while preserving clear ownership boundaries across the split repos. A wider scope would recreate the monolith's implicit shared backend layer under a different name.
+The package exists to remove duplicated backend foundations while preserving clear ownership boundaries across the split repos. The risk is no longer sharing too little; it is centralizing the wrong authority here.
 
 **Evidence**
 
@@ -100,7 +100,7 @@ If any repository begins writing control-plane-owned state or bypassing the HTTP
 ### Read-Mostly Repositories With One Explicit Exception
 **Contract**
 
-Ranking, regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Backtest lifecycle calls are the current explicit exception: `BacktestRepository` may claim runs and post run state transitions back to the control plane.
+Regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Ranking schema mutations remain blocked, but `RankingRepository` now also carries the ranking-refresh claim/complete/fail workflow. `BacktestRepository` continues to own backtest run lifecycle calls, and `ResultsRepository` exposes the semantic reconcile trigger for ranking freshness and canonical backtest freshness.
 
 **Why**
 
@@ -122,14 +122,14 @@ The code and tests enforce blocked mutations for most domain repositories, while
 
 If the backtest write exception is removed, expanded, or reclassified, this document, downstream consumers, and the ownership docs must be updated together.
 
-### No Storage, Provider, Monitoring, or Orchestration Logic
+### No Repo-Local Authority Or EntryPoints
 **Contract**
 
-This repository must not absorb Postgres repositories, provider adapters, monitoring collectors, deploy logic, or job orchestration behavior.
+This repository may own shared storage/runtime/provider helpers, but it must not absorb control-plane API routes, control-plane authority over DB-backed owner state, monitoring ownership, deploy logic, or jobs scheduling/orchestration entrypoints.
 
 **Why**
 
-Those concerns have clear homes in the other split repos. Moving them here would reintroduce hidden coupling and blur release ownership.
+Those concerns still have clear homes in the other split repos. Moving authority or entrypoints here would reintroduce hidden coupling and blur release ownership even if the underlying helper logic is shared.
 
 **Evidence**
 
@@ -175,8 +175,14 @@ The package currently exposes the following public surface and responsibilities:
 | `ControlPlaneTransportConfig` | Hold base URL, API scope, and timeout settings for transport creation |
 | `ControlPlaneTransport` | Build authenticated HTTP requests, normalize environment-derived config, and return JSON payloads |
 | `ControlPlaneRequestError` | Represent non-404 transport failures with status code and detail |
+| `foundation.*` | Shared storage/runtime foundations including blob, config, runtime-config, logging, manifests, and Postgres helpers |
+| `providers.*` | Shared Alpha Vantage and Massive gateway/provider adapters |
+| `market_data.*` | Shared market-data layout, artifact, reconciliation, and pipeline helpers |
+| `domain.regime` | Shared regime domain model and transforms |
+| `backtesting.*` | Shared backtest result persistence and extracted runtime engine helpers |
 | `BacktestRepository` | Read and manage backtest run lifecycle over control-plane HTTP |
-| `RankingRepository` | Read ranking schema state over control-plane HTTP |
+| `RankingRepository` | Read ranking schema state and manage ranking-refresh claims over control-plane HTTP |
+| `ResultsRepository` | Trigger semantic results freshness reconcile over control-plane HTTP |
 | `RegimeRepository` | Read regime model and current regime state over control-plane HTTP |
 | `StrategyRepository` | Read strategy state over control-plane HTTP and normalize strategy config documents |
 | `UniverseRepository` | Read universe configuration state over control-plane HTTP |
@@ -358,7 +364,7 @@ Changing normalization output changes consumer-visible strategy behavior and mus
 ### Backtest Lifecycle Exception Flow
 **Contract**
 
-`BacktestRepository` currently performs both reads and operational writes over control-plane HTTP: claim next run, start run, heartbeat, complete run, and fail run.
+`BacktestRepository` currently performs both reads and operational writes over control-plane HTTP: claim next run, start run, heartbeat, complete run, and fail run. `RankingRepository` now also performs operational ranking-refresh claim/complete/fail calls, and `ResultsRepository` triggers the control-plane semantic reconcile pass.
 
 **Why**
 
@@ -391,6 +397,7 @@ Current exports:
 | `ControlPlaneTransportConfig` | Transport config |
 | `RankingRepository` | Repository |
 | `RegimeRepository` | Repository |
+| `ResultsRepository` | Repository |
 | `StrategyRepository` | Repository |
 | `UniverseRepository` | Repository |
 | `build_access_token_provider` | Auth helper |
@@ -444,6 +451,7 @@ The package currently targets internal control-plane endpoint families under `/a
 | Backtests | `/api/internal/backtests/runs/...` |
 | Rankings | `/api/internal/rankings...` |
 | Regimes | `/api/internal/regimes/...` |
+| Results | `/api/internal/results/...` |
 | Strategies | `/api/internal/strategies...` |
 | Universes | `/api/internal/universes...` |
 
@@ -495,7 +503,7 @@ Any change to `None` vs exception behavior is breaking for consumers that branch
 ### Mutation Blocking and Current Write Exception
 **Contract**
 
-Mutation methods that would let jobs write control-plane-owned ranking, regime, strategy, or universe state must remain blocked via `NotImplementedError` unless ownership changes are explicitly approved. `BacktestRepository` remains the only current write-capable exception inside this package.
+Mutation methods that would let jobs write control-plane-owned ranking schema, regime, strategy, or universe definitions must remain blocked via `NotImplementedError` unless ownership changes are explicitly approved. Current operational exceptions are limited to `BacktestRepository` run lifecycle calls, `RankingRepository` ranking-refresh claim/complete/fail calls, and `ResultsRepository` semantic reconcile triggers.
 
 **Why**
 
@@ -662,10 +670,10 @@ Borderline additions should be rejected or escalated into a decision update befo
 
 Future agents must not:
 - create a generic `utils` bucket
-- add storage repositories
-- add provider adapters
-- add monitoring collectors
-- add job orchestration logic
+- add control-plane API routes
+- add control-plane authority over DB-backed owner state
+- add monitoring ownership
+- add jobs scheduling entrypoints
 - add deploy manifests or runtime bootstrap logic
 - add sibling-repo source coupling back into CI or release
 
@@ -773,9 +781,11 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
+| 2026-04-17 | Widen runtime-common into the shared backend package for storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and shared runtime repositories; treat the resulting package contract as semver-major `2.0.0`. | 1, 2, 3, 4, 5, 6, 8, 9 | Active |
 | 2026-04-06 | Adopt `docs/architecture/architecture-contract.md` as the authoritative living contract for this repo. Existing ADRs, ownership docs, migration notes, and runbooks become supporting evidence rather than peer architecture authorities. | All | Active |
 | 2026-04-06 | Treat the public export list in `python/asset_allocation_runtime_common/__init__.py` as the default published API boundary for this package. | 5, 7, 9 | Active |
-| 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with current backtest lifecycle calls recorded as the sole explicit write exception pending future confirmation. | 4, 6, 7, 10 | Active |
+| 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with explicit operational exceptions limited to backtest lifecycle, ranking-refresh lifecycle, and results freshness reconcile calls. | 4, 6, 7, 10 | Active |
+| 2026-04-17 | Extend the runtime-common public surface with ranking-refresh lifecycle methods and a results freshness reconcile client to support delta-driven platinum ranking and canonical backtest freshness. | 5, 6, 7, 9 | Active |
 | 2026-04-06 | Require this contract to be updated in the same change set as any public behavior or boundary change. | 9, 13 | Active |
 | 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance `main` to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Active |
 
@@ -807,6 +817,7 @@ Test evidence:
 - `tests/python/test_backtest_repository.py`
 - `tests/python/test_ranking_repository.py`
 - `tests/python/test_regime_repository.py`
+- `tests/python/test_results_repository.py`
 - `tests/python/test_strategy_repository.py`
 - `tests/python/test_universe_repository.py`
 

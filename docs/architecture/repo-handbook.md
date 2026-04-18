@@ -10,7 +10,8 @@ The other architecture docs in this folder remain authoritative as supporting ev
 
 1. Publish or locally install `asset-allocation-contracts` and `asset-allocation-runtime-common`.
 2. Work inside one runtime repo at a time.
-3. Use compatibility workflows for cross-repo changes instead of sibling source checkouts.
+3. Prefer `asset_allocation_runtime_common.foundation`, `providers`, `market_data`, `backtesting`, and `domain` imports over recreating shared backend modules in consumer repos.
+4. Use compatibility workflows for cross-repo changes instead of sibling source checkouts.
 
 ## Versioning Rules
 
