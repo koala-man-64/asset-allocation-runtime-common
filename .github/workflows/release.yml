@@ -272,7 +272,22 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
+          import tomllib
           from pathlib import Path
+
+          contracts_version = None
+          pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
+          for dependency in pyproject["project"].get("dependencies", []):
+              match = re.fullmatch(r"asset-allocation-contracts==(?P<version>\d+\.\d+\.\d+)", dependency)
+              if match:
+                  contracts_version = match.group("version")
+                  break
+
+          if not contracts_version:
+              raise SystemExit(
+                  "python/pyproject.toml must declare an exact asset-allocation-contracts dependency for release manifests."
+              )
 
           manifest = {
               "repo": os.environ["GITHUB_REPOSITORY"],
@@ -280,6 +295,7 @@ jobs:
               "artifact_kind": "python-package",
               "artifact_ref": sorted(p.name for p in Path("artifacts/python").iterdir()),
               "version_matrix": {
+                  "contracts": contracts_version,
                   "runtime_common": os.environ["RUNTIME_COMMON_VERSION"],
               },
           }

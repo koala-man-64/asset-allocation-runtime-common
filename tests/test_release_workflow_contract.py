@@ -47,6 +47,15 @@ def test_release_summary_matches_runtime_common_consumer_set() -> None:
     assert 'echo "- Downstream dispatch: \\`runtime_common_released\\` to jobs"' in text
 
 
+def test_release_manifest_records_runtime_common_and_contracts_versions() -> None:
+    text = release_workflow_text()
+    assert 'pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))' in text
+    assert "asset-allocation-contracts" in text
+    assert '"contracts": contracts_version,' in text
+    assert '"runtime_common": os.environ["RUNTIME_COMMON_VERSION"],' in text
+    assert "must declare an exact asset-allocation-contracts dependency for release manifests." in text
+
+
 def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
     keys = env_template_keys()
     assert "CONTROL_" "PLANE_REPOSITORY" not in keys
