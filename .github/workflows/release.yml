@@ -311,10 +311,9 @@ jobs:
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER}"
           jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"
-          for repo in "${jobs_repo}"; do
-            gh api "repos/${repo}/dispatches" \
-              --method POST \
-              --input - <<EOF
+          gh api "repos/${jobs_repo}/dispatches" \
+            --method POST \
+            --input - <<EOF
           {
             "event_type": "runtime_common_released",
             "client_payload": {
@@ -325,7 +324,6 @@ jobs:
             }
           }
           EOF
-          done
 
       - name: Write release summary
         env:

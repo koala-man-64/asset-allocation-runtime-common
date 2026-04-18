@@ -33,11 +33,11 @@ def test_release_workflow_emits_runtime_common_dispatch_event() -> None:
     assert '"event_type": "runtime_common_released"' in text
 
 
-def test_release_workflow_fans_out_only_to_real_consumers() -> None:
+def test_release_workflow_dispatches_only_to_real_consumers() -> None:
     text = release_workflow_text()
     assert 'jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"' in text
     assert "CONTROL_" "PLANE_REPOSITORY" not in text
-    assert 'for repo in "${jobs_repo}"; do' in text
+    assert 'gh api "repos/${jobs_repo}/dispatches" \\' in text
     assert "UI_REPOSITORY" not in text
     assert "asset-allocation-ui" not in text
 
