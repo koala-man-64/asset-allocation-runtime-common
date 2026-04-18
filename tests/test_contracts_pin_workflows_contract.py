@@ -17,10 +17,11 @@ def test_ci_requires_latest_published_contracts_pin() -> None:
     assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode latest" in text
 
 
-def test_security_requires_latest_published_contracts_pin() -> None:
+def test_security_requires_published_contracts_pin() -> None:
     text = workflow_text("security.yml")
-    assert "Verify pinned contracts package is latest published stable version" in text
-    assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode latest" in text
+    assert "Verify pinned contracts package is published" in text
+    assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts" in text
+    assert "--mode latest" not in text
 
 
 def test_refresh_workflow_is_scheduled_and_dispatchable() -> None:

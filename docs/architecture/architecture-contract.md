@@ -585,7 +585,7 @@ Release-contract changes affect downstream upgrade flow, rollback flow, and arti
 ### Security and Dependency Audit Posture
 **Contract**
 
-The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, commits the refreshed pin directly to `main`, and only then runs validation. If the new pin breaks validation, the workflow still fails so the break is visible and must be fixed forward. CI and security workflows hard-fail whenever `python/pyproject.toml` is behind the latest stable published contracts release.
+The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, commits the refreshed pin directly to `main`, and only then runs validation. If the new pin breaks validation, the workflow still fails so the break is visible and must be fixed forward. CI hard-fails whenever `python/pyproject.toml` is behind the latest stable published contracts release, while the security workflow only verifies that the exact pinned contracts version is published.
 
 **Why**
 
