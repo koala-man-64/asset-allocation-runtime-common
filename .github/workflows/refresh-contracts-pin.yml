@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: runtime-common-contracts-pin-refresh
@@ -18,8 +17,6 @@ jobs:
   refresh-contracts-pin:
     name: refresh-contracts-pin
     runs-on: ubuntu-22.04
-    env:
-      REFRESH_BRANCH: automation/contracts-pin-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -85,6 +82,17 @@ jobs:
             echo "contracts_version=${contracts_spec#asset-allocation-contracts==}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Commit refreshed contracts pin to main
+        if: steps.refresh.outputs.contracts_pin_changed == 'true'
+        env:
+          CONTRACTS_VERSION: ${{ steps.refresh.outputs.contracts_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add python/pyproject.toml
+          git commit -m "chore(deps): update asset-allocation-contracts to ${CONTRACTS_VERSION}"
+          git push origin HEAD:main
+
       - name: Install test dependencies
         id: install
         if: steps.refresh.outputs.contracts_pin_changed == 'true'
@@ -121,45 +129,6 @@ jobs:
           set -euo pipefail
           python -m pytest tests/python -q
 
-      - name: Commit refreshed contracts pin
-        if: steps.refresh.outputs.contracts_pin_changed == 'true'
-        env:
-          CONTRACTS_VERSION: ${{ steps.refresh.outputs.contracts_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git checkout -B "${REFRESH_BRANCH}"
-          git add python/pyproject.toml
-          git commit -m "chore(deps): update asset-allocation-contracts to ${CONTRACTS_VERSION}"
-          git push --force-with-lease origin "HEAD:refs/heads/${REFRESH_BRANCH}"
-
-      - name: Create or update contracts refresh pull request
-        if: steps.refresh.outputs.contracts_pin_changed == 'true'
-        env:
-          CONTRACTS_SPEC: ${{ steps.refresh.outputs.contracts_spec }}
-          CONTRACTS_VERSION: ${{ steps.refresh.outputs.contracts_version }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          pr_body_file="$(mktemp)"
-          cat <<EOF > "${pr_body_file}"
-          ## Summary
-
-          - pin \`asset-allocation-contracts\` to \`${CONTRACTS_SPEC}\`
-          - keep runtime-common on the latest stable published contracts release
-          - surface any required fix-forward work immediately instead of holding an older pin
-          EOF
-
-          pr_number="$(gh pr list --state open --base main --head "${REFRESH_BRANCH}" --json number --jq '.[0].number')"
-          pr_title="chore(deps): update asset-allocation-contracts to ${CONTRACTS_VERSION}"
-
-          if [ -n "${pr_number}" ]; then
-            gh pr edit "${pr_number}" --title "${pr_title}" --body-file "${pr_body_file}"
-          else
-            gh pr create --base main --head "${REFRESH_BRANCH}" --title "${pr_title}" --body-file "${pr_body_file}"
-          fi
-
       - name: Write refresh summary
         if: always()
         env:
@@ -175,7 +144,7 @@ jobs:
             echo "## Contracts pin refresh"
             echo ""
             echo "- Contracts spec: \`${CONTRACTS_SPEC}\`"
-            echo "- Pin changed: \`${CONTRACTS_PIN_CHANGED:-false}\`"
+            echo "- Main updated: \`${CONTRACTS_PIN_CHANGED:-false}\`"
             if [ "${CONTRACTS_PIN_CHANGED:-false}" = "true" ]; then
               echo "- Install outcome: \`${INSTALL_OUTCOME}\`"
               echo "- Pip check outcome: \`${PIP_CHECK_OUTCOME}\`"

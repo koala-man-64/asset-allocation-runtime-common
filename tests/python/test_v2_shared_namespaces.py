@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import logging
+
+from asset_allocation_contracts.paths import DataPaths as ContractDataPaths
+from asset_allocation_runtime_common import backtesting, domain, foundation, market_data, providers
+from asset_allocation_runtime_common.shared_core.logging_config import configure_logging
+
+
+def test_v2_namespaces_expose_shared_backend_modules() -> None:
+    assert callable(foundation.connect)
+    assert callable(foundation.create_bronze_alpha26_manifest)
+    assert callable(providers.get_complete_ticker_list)
+    assert callable(market_data.load_domain_artifact)
+    assert callable(backtesting.persist_backtest_results)
+    assert callable(domain.build_regime_outputs)
+
+
+def test_market_data_namespace_reexports_contract_datapaths() -> None:
+    assert market_data.DataPaths is ContractDataPaths
+
+
+def test_domain_namespace_exposes_broader_regime_surface() -> None:
+    policy = domain.default_regime_model_config()
+
+    assert domain.DEFAULT_REGIME_MODEL_NAME
+    assert policy
+    assert isinstance(policy["precedence"], list)
+
+
+def test_configure_logging_defaults_when_env_is_unset(monkeypatch) -> None:
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    root = logging.getLogger()
+    original_handlers = list(root.handlers)
+    original_level = root.level
+
+    try:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+
+        logger = configure_logging()
+
+        assert logger is root
+        assert root.level == logging.INFO
+        assert len(root.handlers) == 1
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        root.setLevel(original_level)
+        for handler in original_handlers:
+            root.addHandler(handler)

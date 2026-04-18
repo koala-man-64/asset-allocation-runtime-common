@@ -31,24 +31,26 @@ def test_refresh_workflow_is_scheduled_and_dispatchable() -> None:
     assert "workflow_dispatch:" in text
 
 
-def test_refresh_workflow_uses_repo_write_and_pr_write_permissions() -> None:
+def test_refresh_workflow_uses_repo_write_permissions_only() -> None:
     text = workflow_text("refresh-contracts-pin.yml")
     assert "contents: write" in text
-    assert "pull-requests: write" in text
+    assert "pull-requests: write" not in text
     assert 'group: runtime-common-contracts-pin-refresh' in text
 
 
-def test_refresh_workflow_syncs_latest_contracts_pin_and_opens_pr() -> None:
+def test_refresh_workflow_syncs_latest_contracts_pin_directly_to_main() -> None:
     text = workflow_text("refresh-contracts-pin.yml")
     assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode sync-latest" in text
-    assert 'REFRESH_BRANCH: automation/contracts-pin-latest' in text
-    assert 'git push --force-with-lease origin "HEAD:refs/heads/${REFRESH_BRANCH}"' in text
-    assert 'gh pr create --base main --head "${REFRESH_BRANCH}"' in text
-    assert 'gh pr edit "${pr_number}" --title "${pr_title}" --body-file "${pr_body_file}"' in text
+    assert "- name: Commit refreshed contracts pin to main" in text
+    assert "git push origin HEAD:main" in text
+    assert "REFRESH_BRANCH" not in text
+    assert "gh pr create" not in text
+    assert "gh pr edit" not in text
 
 
-def test_refresh_workflow_surfaces_validation_failures_after_pr_update() -> None:
+def test_refresh_workflow_surfaces_validation_failures_after_main_update() -> None:
     text = workflow_text("refresh-contracts-pin.yml")
+    assert text.index("- name: Commit refreshed contracts pin to main") < text.index("- name: Install test dependencies")
     assert "continue-on-error: true" in text
     assert 'Refreshed contracts pin requires fix-forward work. Failed checks:' in text
     assert "exit 1" in text

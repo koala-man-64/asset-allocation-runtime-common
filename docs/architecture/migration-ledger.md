@@ -4,7 +4,8 @@
 
 | Item | Classification | Owner | Status |
 | --- | --- | --- | --- |
-| Jobs-side control-plane transport and read-only repositories | canonical | `asset-allocation-runtime-common` | migrated |
+| Jobs-side shared backend foundations, control-plane transport, and shared repositories | canonical | `asset-allocation-runtime-common` | migrated |
+| Control-plane shared backend foundations and provider/runtime deduplication | canonical | `asset-allocation-runtime-common` | migrated in v2 |
 | Contracts consumption in control-plane and jobs Python packages | canonical | `asset-allocation-contracts` | version-pinned |
 | Contracts consumption in UI package and Docker image | canonical | `asset-allocation-contracts` | migrated to package dependency |
 | Control-plane API gateway auth helper | temporary mirror | `asset-allocation-runtime-common` | shim retained |
@@ -16,7 +17,5 @@
 
 ## Open Follow-Up
 
-- Move any remaining duplicated pure helpers from control-plane and jobs into runtime-common only when they have no storage or provider side effects.
-- Remove compatibility shims after one release cycle.
+- Remove any remaining runtime-common compatibility wrappers after consumer import migration fully settles.
 - Add a full release-matrix publisher if a dedicated platform repo is introduced.
-

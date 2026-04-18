@@ -60,3 +60,38 @@ def test_ranking_mutations_are_blocked() -> None:
     finally:
         transport.close()
 
+
+def test_ranking_refresh_lifecycle_calls_expected_internal_paths() -> None:
+    calls: list[tuple[str, str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, request.content.decode("utf-8") or None))
+        if request.url.path.endswith("/claim"):
+            return httpx.Response(200, json={"work": {"strategyName": "alpha", "claimToken": "claim-1"}})
+        return httpx.Response(200, json={"status": "ok"})
+
+    transport = _build_transport(handler)
+    try:
+        repo = RankingRepository(transport=transport)
+        claim = repo.claim_next_refresh(execution_name="job-1")
+        repo.complete_refresh(
+            "alpha",
+            claim_token="claim-1",
+            run_id="run-1",
+            dependency_fingerprint="fp-1",
+            dependency_state={"domains": {}},
+        )
+        repo.fail_refresh("alpha", claim_token="claim-1", error="boom")
+    finally:
+        transport.close()
+
+    assert claim == {"strategyName": "alpha", "claimToken": "claim-1"}
+    assert calls == [
+        ("POST", "/api/internal/rankings/refresh/claim", '{"executionName":"job-1"}'),
+        (
+            "POST",
+            "/api/internal/rankings/refresh/alpha/complete",
+            '{"claimToken":"claim-1","runId":"run-1","dependencyFingerprint":"fp-1","dependencyState":{"domains":{}}}',
+        ),
+        ("POST", "/api/internal/rankings/refresh/alpha/fail", '{"claimToken":"claim-1","error":"boom"}'),
+    ]
