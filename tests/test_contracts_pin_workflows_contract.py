@@ -15,17 +15,19 @@ def workflow_text(name: str) -> str:
     return workflow_path(name).read_text(encoding="utf-8")
 
 
-def test_ci_requires_resolvable_contracts_requirement() -> None:
+def test_ci_requires_exact_contracts_pin_and_built_metadata_check() -> None:
     text = workflow_text("ci.yml")
-    assert "Verify contracts dependency requirement resolves" in text
+    assert "Verify contracts dependency is exactly pinned and published" in text
     assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts" in text
+    assert "Verify built distributions pin contracts exactly" in text
+    assert "--distribution-dir artifacts/python" in text
     assert "--mode latest" not in text
     assert "sync-latest" not in text
 
 
-def test_security_requires_resolvable_contracts_requirement() -> None:
+def test_security_requires_exact_contracts_pin() -> None:
     text = workflow_text("security.yml")
-    assert "Verify contracts dependency requirement resolves" in text
+    assert "Verify contracts dependency is exactly pinned and published" in text
     assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts" in text
     assert "--mode latest" not in text
 

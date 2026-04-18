@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: |
             python/pyproject.toml
 
-      - name: Verify contracts dependency requirement resolves
+      - name: Verify contracts dependency is exactly pinned and published
         shell: bash
         run: |
           set -euo pipefail
@@ -226,6 +226,12 @@ jobs:
           mkdir -p artifacts/python
           python -m pip install build
           python -m build python --sdist --wheel --outdir artifacts/python
+
+      - name: Verify built distributions pin contracts exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --distribution-dir artifacts/python
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0

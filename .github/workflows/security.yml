@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Verify contracts dependency requirement resolves
+      - name: Verify contracts dependency is exactly pinned and published
         shell: bash
         run: |
           set -euo pipefail
