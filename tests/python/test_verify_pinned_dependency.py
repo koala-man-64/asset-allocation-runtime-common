@@ -23,14 +23,14 @@ def load_module():
 MODULE = load_module()
 
 
-def test_load_pinned_dependency_returns_exact_spec(tmp_path: Path) -> None:
+def test_load_minimum_dependency_returns_floor_spec(tmp_path: Path) -> None:
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(
         """
 [project]
 dependencies = [
     "azure-identity==1.25.2",
-    "asset-allocation-contracts==1.1.0",
+    "asset-allocation-contracts>=1.1.0",
 ]
 """.strip()
         + "\n",
@@ -38,12 +38,12 @@ dependencies = [
     )
 
     assert (
-        MODULE.load_pinned_dependency(pyproject_path, "asset-allocation-contracts")
-        == "asset-allocation-contracts==1.1.0"
+        MODULE.load_minimum_dependency(pyproject_path, "asset-allocation-contracts")
+        == "asset-allocation-contracts>=1.1.0"
     )
 
 
-def test_verify_pinned_dependency_uses_pip_download(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_dependency_requirement_uses_pip_download(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, list[str]] = {}
 
     def fake_run(args: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
@@ -55,14 +55,14 @@ def test_verify_pinned_dependency_uses_pip_download(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
 
-    MODULE.verify_pinned_dependency("asset-allocation-contracts==1.1.0")
+    MODULE.verify_dependency_requirement("asset-allocation-contracts>=1.1.0")
 
     assert captured["args"][:4] == [sys.executable, "-m", "pip", "download"]
     assert "--pre" not in captured["args"]
-    assert "asset-allocation-contracts==1.1.0" in captured["args"]
+    assert "asset-allocation-contracts>=1.1.0" in captured["args"]
 
 
-def test_verify_pinned_dependency_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_dependency_requirement_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(args: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=args,
@@ -73,10 +73,10 @@ def test_verify_pinned_dependency_raises_clear_error(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
 
-    with pytest.raises(RuntimeError, match="Publish the shared package first"):
-        MODULE.verify_pinned_dependency("asset-allocation-contracts==1.1.0")
+    with pytest.raises(RuntimeError, match="Publish a compatible shared package first"):
+        MODULE.verify_dependency_requirement("asset-allocation-contracts>=1.1.0")
 
 
-def test_parse_dependency_pin_rejects_non_stable_semver() -> None:
-    with pytest.raises(ValueError, match="stable semver pin"):
-        MODULE.parse_dependency_pin("asset-allocation-contracts==2.0.0rc1", "asset-allocation-contracts")
+def test_parse_dependency_requirement_rejects_non_stable_semver() -> None:
+    with pytest.raises(ValueError, match="stable semver minimum version"):
+        MODULE.parse_dependency_requirement("asset-allocation-contracts>=2.0.0rc1", "asset-allocation-contracts")

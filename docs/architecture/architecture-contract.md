@@ -247,10 +247,10 @@ Any change to this transform is a consumer-visible behavior change and must be v
 
 ## 6. Runtime Flows
 
-### Consumer Installation and Version Pinning
+### Consumer Installation and Contracts Version Floor
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, and CI plus security verification only require that the chosen pin resolves from the configured package index.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` is declared as a `>=` minimum stable version in `python/pyproject.toml`, and CI plus security verification only require that the declared requirement resolves from the configured package index.
 
 **Why**
 
@@ -529,7 +529,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts`, and CI plus security verification only require that the selected pin is published. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts` with a `>=` minimum stable version, and CI plus security verification only require that the declared requirement resolves. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -585,7 +585,7 @@ Release-contract changes affect downstream upgrade flow, rollback flow, and arti
 ### Security and Dependency Audit Posture
 **Contract**
 
-The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. CI and the security workflow both verify that the exact pinned `asset-allocation-contracts` version is published before install or audit. The repo does not auto-advance the contracts pin; dependency pin updates are intentional source changes that must be validated in the normal change flow.
+The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. CI and the security workflow both verify that the declared `asset-allocation-contracts` dependency requirement resolves before install or audit. Raising the minimum version floor remains an intentional source change, but installers may select newer matching published versions without changing this repo.
 
 **Why**
 
@@ -782,7 +782,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
 | 2026-04-17 | Widen runtime-common into the shared backend package for storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and shared runtime repositories; treat the resulting package contract as semver-major `2.0.0`. | 1, 2, 3, 4, 5, 6, 8, 9 | Active |
-| 2026-04-18 | Keep `asset-allocation-contracts` exact-pinned in source, but stop auto-advancing to the latest published release; CI and security verify only that the selected pin is published. | 6, 8, 9, 13 | Active |
+| 2026-04-18 | Declare `asset-allocation-contracts` as a minimum stable version floor (`>=`) in source; CI and security verify that the declared requirement resolves, and installers may consume newer matching published versions without repo changes. | 6, 8, 9, 13 | Active |
 | 2026-04-06 | Adopt `docs/architecture/architecture-contract.md` as the authoritative living contract for this repo. Existing ADRs, ownership docs, migration notes, and runbooks become supporting evidence rather than peer architecture authorities. | All | Active |
 | 2026-04-06 | Treat the public export list in `python/asset_allocation_runtime_common/__init__.py` as the default published API boundary for this package. | 5, 7, 9 | Active |
 | 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with explicit operational exceptions limited to backtest lifecycle, ranking-refresh lifecycle, and results freshness reconcile calls. | 4, 6, 7, 10 | Active |

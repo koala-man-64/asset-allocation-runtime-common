@@ -5,9 +5,9 @@
 - `ci.yml` is the required gate for PRs and `main`.
 - CI must install the package from the repo itself and run tests without any sibling checkout.
 - CI also verifies the package can build a wheel and sdist.
-- CI verifies that the exact `asset-allocation-contracts` pin declared in `python/pyproject.toml` is published.
+- CI verifies that the `asset-allocation-contracts` dependency requirement declared in `python/pyproject.toml` resolves from the configured package index.
 
-- `security.yml` also verifies that the exact contracts pin already declared in `python/pyproject.toml` is published before running `pip-audit`.
+- `security.yml` also verifies that the declared contracts dependency requirement in `python/pyproject.toml` resolves before running `pip-audit`.
 
 ## Release
 

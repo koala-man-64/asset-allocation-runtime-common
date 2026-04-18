@@ -14,19 +14,19 @@ STABLE_SEMVER_PATTERN = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>
 
 
 @dataclass(frozen=True)
-class DependencyPin:
+class DependencyRequirement:
     package_name: str
-    version: str
+    minimum_version: str
 
     @property
     def spec(self) -> str:
-        return f"{self.package_name}=={self.version}"
+        return f"{self.package_name}>={self.minimum_version}"
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify a pinned dependency in python/pyproject.toml using the configured package index."
+            "Verify a minimum dependency requirement in python/pyproject.toml using the configured package index."
         )
     )
     parser.add_argument("--pyproject", default="python/pyproject.toml", help="Path to the pyproject.toml file to inspect.")
@@ -42,32 +42,32 @@ def parse_stable_semver(version: str) -> tuple[int, int, int] | None:
     return tuple(int(match.group(name)) for name in ("major", "minor", "patch"))
 
 
-def load_pinned_dependency(pyproject_path: Path, package_name: str) -> str:
+def load_minimum_dependency(pyproject_path: Path, package_name: str) -> str:
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     dependencies = pyproject.get("project", {}).get("dependencies", [])
-    prefix = f"{package_name}=="
+    prefix = f"{package_name}>="
     matches = [dependency for dependency in dependencies if dependency.startswith(prefix)]
 
     if len(matches) != 1:
         raise ValueError(
-            f"Expected exactly one pinned dependency for {package_name} in {pyproject_path}, found {len(matches)}."
+            f"Expected exactly one minimum-version dependency for {package_name} in {pyproject_path}, found {len(matches)}."
         )
 
     return matches[0]
 
 
-def parse_dependency_pin(spec: str, package_name: str) -> DependencyPin:
-    prefix = f"{package_name}=="
+def parse_dependency_requirement(spec: str, package_name: str) -> DependencyRequirement:
+    prefix = f"{package_name}>="
     if not spec.startswith(prefix):
-        raise ValueError(f"Expected pinned spec for {package_name}, found '{spec}'.")
+        raise ValueError(f"Expected >= requirement for {package_name}, found '{spec}'.")
 
     version = spec.removeprefix(prefix)
     if parse_stable_semver(version) is None:
         raise ValueError(
-            f"Expected {package_name} to use a stable semver pin, found '{version}'."
+            f"Expected {package_name} to use a stable semver minimum version, found '{version}'."
         )
 
-    return DependencyPin(package_name=package_name, version=version)
+    return DependencyRequirement(package_name=package_name, minimum_version=version)
 
 
 def run_pip_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
@@ -79,7 +79,7 @@ def run_pip_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def verify_pinned_dependency(spec: str) -> None:
+def verify_dependency_requirement(spec: str) -> None:
     with tempfile.TemporaryDirectory(prefix="runtime-common-dependency-check-") as download_dir:
         result = run_pip_command(
             [
@@ -96,13 +96,13 @@ def verify_pinned_dependency(spec: str) -> None:
         )
 
     if result.returncode == 0:
-        print(f"Verified published dependency: {spec}")
+        print(f"Verified published dependency requirement: {spec}")
         return
 
     output = result.stderr.strip() or result.stdout.strip() or "pip download failed without output."
     raise RuntimeError(
-        "Pinned dependency could not be resolved from the configured package index: "
-        f"{spec}. Publish the shared package first or update python/pyproject.toml to a published version.\n"
+        "Dependency requirement could not be resolved from the configured package index: "
+        f"{spec}. Publish a compatible shared package first or update python/pyproject.toml to a satisfiable minimum version.\n"
         f"pip output:\n{output}"
     )
 
@@ -112,9 +112,9 @@ def main() -> int:
     pyproject_path = Path(args.pyproject).resolve()
 
     try:
-        spec = load_pinned_dependency(pyproject_path, args.package)
-        current_pin = parse_dependency_pin(spec, args.package)
-        verify_pinned_dependency(current_pin.spec)
+        spec = load_minimum_dependency(pyproject_path, args.package)
+        requirement = parse_dependency_requirement(spec, args.package)
+        verify_dependency_requirement(requirement.spec)
     except (OSError, ValueError, RuntimeError, tomllib.TOMLDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: |
             python/pyproject.toml
 
-      - name: Verify pinned contracts package is published
+      - name: Verify contracts dependency requirement resolves
         shell: bash
         run: |
           set -euo pipefail
