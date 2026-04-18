@@ -1,8 +1,8 @@
 name,class,github_storage,source_of_truth,template,notes
 CONTROL_PLANE_REPOSITORY,deploy_var,var,deploy_config,true,Sibling control-plane repo slug used for runtime_common_released dispatch.
 JOBS_REPOSITORY,deploy_var,var,deploy_config,true,Sibling jobs repo slug used for runtime_common_released dispatch.
-DISPATCH_APP_ID,deploy_var,var,deploy_config,true,GitHub App id used for cross-repo dispatch and repo automation PR updates.
+DISPATCH_APP_ID,deploy_var,var,deploy_config,true,GitHub App id used for release automation and cross-repo dispatch.
 PYTHON_PUBLISH_REPOSITORY_URL,deploy_var,var,deploy_config,true,Python package registry upload URL.
-DISPATCH_APP_PRIVATE_KEY,secret,secret,secret_store,true,GitHub App private key read from a PEM file and stored with literal newline escapes for cross-repo dispatch and repo automation PR updates.
+DISPATCH_APP_PRIVATE_KEY,secret,secret,secret_store,true,GitHub App private key read from a PEM file and stored with literal newline escapes for release automation and cross-repo dispatch.
 PYTHON_PUBLISH_USERNAME,secret,secret,secret_store,true,Username or token sentinel for the Python registry.
 PYTHON_PUBLISH_PASSWORD,secret,secret,secret_store,true,Password or token for the Python registry.

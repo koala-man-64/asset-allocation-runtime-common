@@ -5,14 +5,9 @@
 - `ci.yml` is the required gate for PRs and `main`.
 - CI must install the package from the repo itself and run tests without any sibling checkout.
 - CI also verifies the package can build a wheel and sdist.
-- CI hard-fails when `python/pyproject.toml` pins `asset-allocation-contracts` to anything other than the latest stable published version.
+- CI verifies that the exact `asset-allocation-contracts` pin declared in `python/pyproject.toml` is published.
 
-### Contracts pin refresh
-
-- `refresh-contracts-pin.yml` runs on weekdays and manual dispatch.
-- It rewrites `asset-allocation-contracts` in `python/pyproject.toml` to the latest stable published version, commits the refreshed pin, and pushes it straight to `main`.
-- The workflow then runs install, `pip check`, `ruff`, and `pytest` against the refreshed pin. It still fails the workflow if validation breaks, but only after `main` has already been advanced so the break is visible and must be fixed forward.
-- `security.yml` verifies that the exact contracts pin already declared in `python/pyproject.toml` is published before running `pip-audit`. It does not require the pin to be the latest stable release.
+- `security.yml` also verifies that the exact contracts pin already declared in `python/pyproject.toml` is published before running `pip-audit`.
 
 ## Release
 
@@ -23,7 +18,7 @@
 
 ### GitHub configuration bootstrap
 
-The release workflow and contracts-pin refresh workflow require these repository-scoped GitHub settings:
+The release workflow requires these repository-scoped GitHub settings:
 
 - Variables: `CONTROL_PLANE_REPOSITORY`, `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
 - Secrets: `DISPATCH_APP_PRIVATE_KEY`, `PYTHON_PUBLISH_USERNAME`, `PYTHON_PUBLISH_PASSWORD`

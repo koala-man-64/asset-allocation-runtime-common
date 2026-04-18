@@ -8,7 +8,7 @@
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
 | Canonical Baseline | `main` branch, package version `2.0.0` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
-| Last Reviewed | 2026-04-17 |
+| Last Reviewed | 2026-04-18 |
 | Change Class | Decision Capture |
 
 Evidence status used in this document:
@@ -250,7 +250,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Version Pinning
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, and repo automation must advance `main` directly to the latest stable published contracts release whenever that pin falls behind.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, and CI plus security verification only require that the chosen pin resolves from the configured package index.
 
 **Why**
 
@@ -529,7 +529,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts`, and automation updates `main` directly so that pin matches the latest stable published contracts release. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts`, and CI plus security verification only require that the selected pin is published. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -585,7 +585,7 @@ Release-contract changes affect downstream upgrade flow, rollback flow, and arti
 ### Security and Dependency Audit Posture
 **Contract**
 
-The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, commits the refreshed pin directly to `main`, and only then runs validation. If the new pin breaks validation, the workflow still fails so the break is visible and must be fixed forward. CI hard-fails whenever `python/pyproject.toml` is behind the latest stable published contracts release, while the security workflow only verifies that the exact pinned contracts version is published.
+The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. CI and the security workflow both verify that the exact pinned `asset-allocation-contracts` version is published before install or audit. The repo does not auto-advance the contracts pin; dependency pin updates are intentional source changes that must be validated in the normal change flow.
 
 **Why**
 
@@ -782,12 +782,13 @@ Future cleanup work should use this rule to decide whether to share more code or
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
 | 2026-04-17 | Widen runtime-common into the shared backend package for storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and shared runtime repositories; treat the resulting package contract as semver-major `2.0.0`. | 1, 2, 3, 4, 5, 6, 8, 9 | Active |
+| 2026-04-18 | Keep `asset-allocation-contracts` exact-pinned in source, but stop auto-advancing to the latest published release; CI and security verify only that the selected pin is published. | 6, 8, 9, 13 | Active |
 | 2026-04-06 | Adopt `docs/architecture/architecture-contract.md` as the authoritative living contract for this repo. Existing ADRs, ownership docs, migration notes, and runbooks become supporting evidence rather than peer architecture authorities. | All | Active |
 | 2026-04-06 | Treat the public export list in `python/asset_allocation_runtime_common/__init__.py` as the default published API boundary for this package. | 5, 7, 9 | Active |
 | 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with explicit operational exceptions limited to backtest lifecycle, ranking-refresh lifecycle, and results freshness reconcile calls. | 4, 6, 7, 10 | Active |
 | 2026-04-17 | Extend the runtime-common public surface with ranking-refresh lifecycle methods and a results freshness reconcile client to support delta-driven platinum ranking and canonical backtest freshness. | 5, 6, 7, 9 | Active |
 | 2026-04-06 | Require this contract to be updated in the same change set as any public behavior or boundary change. | 9, 13 | Active |
-| 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance `main` to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Active |
+| 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance `main` to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Superseded |
 
 ## 12. Evidence Ledger
 
@@ -823,7 +824,6 @@ Test evidence:
 
 Workflow evidence:
 - `.github/workflows/ci.yml`
-- `.github/workflows/refresh-contracts-pin.yml`
 - `.github/workflows/release.yml`
 - `.github/workflows/security.yml`
 - `.github/CODEOWNERS`
