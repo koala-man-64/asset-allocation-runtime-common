@@ -13,14 +13,14 @@
 
 - `release.yml` is a manually dispatched workflow that releases from `main`.
 - It reuses an already-prepared release version when possible; otherwise it bumps the requested semver segment, updates the tracked release files, commits the bump, creates the release tag, publishes the Python package, and writes `artifacts/release-manifest.json`.
-- The release workflow dispatches `runtime_common_released` to control-plane and jobs.
-- Consumer repos should validate the new version through their compatibility workflows before production rollout.
+- The release workflow dispatches `runtime_common_released` to jobs.
+- Consumer repos should validate any repinned runtime-common version through their normal CI and release checks before production rollout.
 
 ### GitHub configuration bootstrap
 
 The release workflow requires these repository-scoped GitHub settings:
 
-- Variables: `CONTROL_PLANE_REPOSITORY`, `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
+- Variables: `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
 - Secrets: `DISPATCH_APP_PRIVATE_KEY`, `PYTHON_PUBLISH_USERNAME`, `PYTHON_PUBLISH_PASSWORD`
 
 This repo tracks the expected configuration in `docs/ops/env-contract.csv` and `.env.template`.

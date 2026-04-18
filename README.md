@@ -23,7 +23,7 @@ python -m pytest .\tests\python -q
 
 ## Operations
 
-- `release.yml` dispatches `runtime_common_released` only to `asset-allocation-control-plane` and `asset-allocation-jobs`.
+- `release.yml` dispatches `runtime_common_released` only to `asset-allocation-jobs`.
 - `asset-allocation-ui` is intentionally excluded because it consumes published contracts, not `asset-allocation-runtime-common`.
 
 ## Docs

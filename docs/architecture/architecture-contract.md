@@ -565,7 +565,7 @@ Reducing this validation weakens confidence in the published artifact and must b
 ### Release and Downstream Dispatch Behavior
 **Contract**
 
-The manually dispatched release workflow runs from `main`, determines whether the tracked package version can be reused or must be bumped according to the requested semver increment, updates the tracked release baseline when needed, creates the release tag, builds and publishes the Python package, writes `artifacts/release-manifest.json`, and dispatches `runtime_common_released` to control-plane and jobs. Consumer repos are expected to pin exact versions and record them in their release manifests.
+The manually dispatched release workflow runs from `main`, determines whether the tracked package version can be reused or must be bumped according to the requested semver increment, updates the tracked release baseline when needed, creates the release tag, builds and publishes the Python package, writes `artifacts/release-manifest.json`, and dispatches `runtime_common_released` to jobs. Consumer repos are expected to pin exact versions and record them in their release manifests.
 
 **Why**
 
@@ -621,7 +621,7 @@ Adding retries, fallback logic, richer logging, or tracing changes runtime behav
 ### Known Validation Gap: No Cross-Repo Consumer Compatibility Gate Yet
 **Contract**
 
-This repo currently validates itself in isolation. It does not, by itself, prove that a candidate wheel installs into `asset-allocation-control-plane` and `asset-allocation-jobs` and passes their compatibility suites.
+This repo currently validates itself in isolation. It does not, by itself, prove that a candidate wheel installs into `asset-allocation-jobs` and passes its compatibility suite, and control-plane adoption is coordinated through pinned published versions rather than a downstream dispatch receiver.
 
 **Why**
 

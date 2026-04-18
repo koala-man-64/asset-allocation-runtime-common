@@ -5,7 +5,7 @@
 1. Release `asset-allocation-contracts`.
 2. Release `asset-allocation-runtime-common`.
 3. Update control-plane and jobs pins if needed.
-4. Run control-plane contracts compatibility and runtime-common compatibility.
+4. Run the repo-local CI and release checks for any control-plane pin update.
 5. Run jobs control-plane compatibility and runtime-common compatibility.
 6. Release control-plane, jobs, and UI with pinned package versions.
 
@@ -21,4 +21,3 @@
 - One representative job can read control-plane state and complete.
 - UI serves `/` and `/config.js`.
 - Release manifests show the intended contracts and runtime-common versions.
-

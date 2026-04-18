@@ -302,7 +302,6 @@ jobs:
       - name: Dispatch runtime-common release to consumers
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          CONTROL_PLANE_REPOSITORY: ${{ vars.CONTROL_PLANE_REPOSITORY }}
           JOBS_REPOSITORY: ${{ vars.JOBS_REPOSITORY }}
           RELEASE_GIT_SHA: ${{ steps.release-ref.outputs.release_git_sha }}
           RELEASE_REF_NAME: ${{ steps.release-ref.outputs.release_ref_name }}
@@ -311,9 +310,8 @@ jobs:
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER}"
-          control_plane_repo="${CONTROL_PLANE_REPOSITORY:-${owner}/asset-allocation-control-plane}"
           jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"
-          for repo in "${control_plane_repo}" "${jobs_repo}"; do
+          for repo in "${jobs_repo}"; do
             gh api "repos/${repo}/dispatches" \
               --method POST \
               --input - <<EOF
@@ -343,5 +341,5 @@ jobs:
             echo "- Version: \`${RUNTIME_COMMON_VERSION}\`"
             echo "- Ref: \`${RELEASE_REF_NAME}\`"
             echo "- Manifest: \`artifacts/release-manifest.json\`"
-            echo "- Downstream dispatch: \`runtime_common_released\` to control-plane and jobs"
+            echo "- Downstream dispatch: \`runtime_common_released\` to jobs"
           } >> "${GITHUB_STEP_SUMMARY}"

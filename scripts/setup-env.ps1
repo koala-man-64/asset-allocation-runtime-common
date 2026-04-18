@@ -131,9 +131,6 @@ function Resolve-DiscoveredValue {
     }
 
     switch ($Key) {
-        "CONTROL_PLANE_REPOSITORY" {
-            return (New-Resolution -Value "$owner/asset-allocation-control-plane" -Source "git")
-        }
         "JOBS_REPOSITORY" {
             return (New-Resolution -Value "$owner/asset-allocation-jobs" -Source "git")
         }

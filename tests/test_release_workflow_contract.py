@@ -35,21 +35,22 @@ def test_release_workflow_emits_runtime_common_dispatch_event() -> None:
 
 def test_release_workflow_fans_out_only_to_real_consumers() -> None:
     text = release_workflow_text()
-    assert 'control_plane_repo="${CONTROL_PLANE_REPOSITORY:-${owner}/asset-allocation-control-plane}"' in text
     assert 'jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"' in text
-    assert 'for repo in "${control_plane_repo}" "${jobs_repo}"; do' in text
+    assert "CONTROL_" "PLANE_REPOSITORY" not in text
+    assert 'for repo in "${jobs_repo}"; do' in text
     assert "UI_REPOSITORY" not in text
     assert "asset-allocation-ui" not in text
 
 
 def test_release_summary_matches_runtime_common_consumer_set() -> None:
     text = release_workflow_text()
-    assert 'echo "- Downstream dispatch: \\`runtime_common_released\\` to control-plane and jobs"' in text
+    assert 'echo "- Downstream dispatch: \\`runtime_common_released\\` to jobs"' in text
 
 
 def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
     keys = env_template_keys()
-    assert {"CONTROL_PLANE_REPOSITORY", "JOBS_REPOSITORY"} <= keys
+    assert "CONTROL_" "PLANE_REPOSITORY" not in keys
+    assert "JOBS_REPOSITORY" in keys
     assert "UI_REPOSITORY" not in keys
 
     dispatch_rows = {
@@ -57,5 +58,4 @@ def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
         for row in env_contract_rows()
         if "runtime_common_released dispatch" in row["notes"]
     }
-    assert set(dispatch_rows) == {"CONTROL_PLANE_REPOSITORY", "JOBS_REPOSITORY"}
-
+    assert set(dispatch_rows) == {"JOBS_REPOSITORY"}
