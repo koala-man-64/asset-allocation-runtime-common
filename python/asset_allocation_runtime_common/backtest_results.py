@@ -5,7 +5,7 @@ from typing import Any, Callable, Iterable, Sequence
 from asset_allocation_runtime_common.postgres import connect, copy_rows
 
 
-BACKTEST_RESULTS_SCHEMA_VERSION = 2
+BACKTEST_RESULTS_SCHEMA_VERSION = 4
 
 _SUMMARY_COLUMNS = [
     "run_id",
@@ -17,6 +17,28 @@ _SUMMARY_COLUMNS = [
     "trades",
     "initial_cash",
     "final_equity",
+    "gross_total_return",
+    "gross_annualized_return",
+    "total_commission",
+    "total_slippage_cost",
+    "total_transaction_cost",
+    "cost_drag_bps",
+    "avg_gross_exposure",
+    "avg_net_exposure",
+    "sortino_ratio",
+    "calmar_ratio",
+    "closed_positions",
+    "winning_positions",
+    "losing_positions",
+    "hit_rate",
+    "avg_win_pnl",
+    "avg_loss_pnl",
+    "avg_win_return",
+    "avg_loss_return",
+    "payoff_ratio",
+    "profit_factor",
+    "expectancy_pnl",
+    "expectancy_return",
 ]
 _TIMESERIES_COLUMNS = [
     "run_id",
@@ -61,6 +83,27 @@ _TRADE_COLUMNS = [
     "commission",
     "slippage_cost",
     "cash_after",
+    "position_id",
+    "trade_role",
+]
+_CLOSED_POSITION_COLUMNS = [
+    "run_id",
+    "position_id",
+    "symbol",
+    "opened_at",
+    "closed_at",
+    "holding_period_bars",
+    "average_cost",
+    "exit_price",
+    "max_quantity",
+    "resize_count",
+    "realized_pnl",
+    "realized_return",
+    "total_commission",
+    "total_slippage_cost",
+    "total_transaction_cost",
+    "exit_reason",
+    "exit_rule_id",
 ]
 _SELECTION_TRACE_COLUMNS = [
     "run_id",
@@ -109,6 +152,28 @@ def _build_summary_row(run_id: str, summary: dict[str, Any]) -> list[Any]:
         summary.get("trades"),
         summary.get("initial_cash"),
         summary.get("final_equity"),
+        summary.get("gross_total_return"),
+        summary.get("gross_annualized_return"),
+        summary.get("total_commission"),
+        summary.get("total_slippage_cost"),
+        summary.get("total_transaction_cost"),
+        summary.get("cost_drag_bps"),
+        summary.get("avg_gross_exposure"),
+        summary.get("avg_net_exposure"),
+        summary.get("sortino_ratio"),
+        summary.get("calmar_ratio"),
+        summary.get("closed_positions"),
+        summary.get("winning_positions"),
+        summary.get("losing_positions"),
+        summary.get("hit_rate"),
+        summary.get("avg_win_pnl"),
+        summary.get("avg_loss_pnl"),
+        summary.get("avg_win_return"),
+        summary.get("avg_loss_return"),
+        summary.get("payoff_ratio"),
+        summary.get("profit_factor"),
+        summary.get("expectancy_pnl"),
+        summary.get("expectancy_return"),
     ]
 
 
@@ -166,6 +231,30 @@ def _build_trade_row(run_id: str, row: dict[str, Any], index: int) -> list[Any]:
         row.get("commission"),
         row.get("slippage_cost"),
         row.get("cash_after"),
+        row.get("position_id"),
+        row.get("trade_role"),
+    ]
+
+
+def _build_closed_position_row(run_id: str, row: dict[str, Any], _index: int) -> list[Any]:
+    return [
+        run_id,
+        row.get("position_id"),
+        row.get("symbol"),
+        row.get("opened_at"),
+        row.get("closed_at"),
+        row.get("holding_period_bars"),
+        row.get("average_cost"),
+        row.get("exit_price"),
+        row.get("max_quantity"),
+        row.get("resize_count"),
+        row.get("realized_pnl"),
+        row.get("realized_return"),
+        row.get("total_commission"),
+        row.get("total_slippage_cost"),
+        row.get("total_transaction_cost"),
+        row.get("exit_reason"),
+        row.get("exit_rule_id"),
     ]
 
 
@@ -207,6 +296,7 @@ def _delete_existing_result_rows(cur: Any, run_id: str) -> None:
         "core.backtest_regime_trace",
         "core.backtest_selection_trace",
         "core.backtest_trades",
+        "core.backtest_closed_positions",
         "core.backtest_rolling_metrics",
         "core.backtest_timeseries",
         "core.backtest_run_summary",
@@ -255,6 +345,7 @@ def persist_backtest_results(
     timeseries_rows: Iterable[dict[str, Any]] | None = None,
     rolling_metric_rows: Iterable[dict[str, Any]] | None = None,
     trade_rows: Iterable[dict[str, Any]] | None = None,
+    closed_position_rows: Iterable[dict[str, Any]] | None = None,
     selection_trace_rows: Iterable[dict[str, Any]] | None = None,
     regime_trace_rows: Iterable[dict[str, Any]] | None = None,
     results_schema_version: int = BACKTEST_RESULTS_SCHEMA_VERSION,
@@ -274,9 +365,31 @@ def persist_backtest_results(
                     max_drawdown,
                     trades,
                     initial_cash,
-                    final_equity
+                    final_equity,
+                    gross_total_return,
+                    gross_annualized_return,
+                    total_commission,
+                    total_slippage_cost,
+                    total_transaction_cost,
+                    cost_drag_bps,
+                    avg_gross_exposure,
+                    avg_net_exposure,
+                    sortino_ratio,
+                    calmar_ratio,
+                    closed_positions,
+                    winning_positions,
+                    losing_positions,
+                    hit_rate,
+                    avg_win_pnl,
+                    avg_loss_pnl,
+                    avg_win_return,
+                    avg_loss_return,
+                    payoff_ratio,
+                    profit_factor,
+                    expectancy_pnl,
+                    expectancy_return
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 _build_summary_row(run_id, summary),
             )
@@ -302,6 +415,14 @@ def persist_backtest_results(
                 columns=_TRADE_COLUMNS,
                 rows=trade_rows,
                 row_builder=lambda row, index: _build_trade_row(run_id, row, index),
+                run_id=run_id,
+            )
+            _copy_dataset(
+                cur,
+                table="core.backtest_closed_positions",
+                columns=_CLOSED_POSITION_COLUMNS,
+                rows=closed_position_rows,
+                row_builder=lambda row, index: _build_closed_position_row(run_id, row, index),
                 run_id=run_id,
             )
             _copy_dataset(

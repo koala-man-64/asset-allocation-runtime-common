@@ -16,7 +16,7 @@ The other architecture docs in this folder remain authoritative as supporting ev
 
 - `asset-allocation-contracts` and `asset-allocation-runtime-common` are semver artifacts.
 - `asset-allocation-runtime-common` keeps `asset-allocation-contracts` exact-pinned in source, but that pin is expected to match the latest stable published contracts release.
-- A scheduled refresh workflow opens or updates a PR when the contracts pin falls behind, and normal CI fails until the repo catches up.
+- A scheduled refresh workflow syncs `main` directly when the contracts pin falls behind, and it fails after the update if validation breaks so fix-forward work starts immediately.
 - The `Runtime Common Release` workflow owns the tracked `asset-allocation-runtime-common` version bump and release tag creation from `main`; the operator selects the semver increment when dispatching the workflow.
 - Control-plane, jobs, and UI pin exact dependency versions in manifests.
 - Release manifests record at least the current repo version plus shared dependency versions.

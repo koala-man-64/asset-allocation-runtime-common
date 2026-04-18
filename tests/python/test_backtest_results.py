@@ -140,6 +140,30 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "commission": 1.0,
                 "slippage_cost": 0.5,
                 "cash_after": 98998.5,
+                "position_id": "pos-1",
+                "trade_role": "entry",
+            }
+        ]
+    )
+    closed_position_rows = _RowSource(
+        [
+            {
+                "position_id": "pos-1",
+                "symbol": "MSFT",
+                "opened_at": "2026-03-03T14:35:00+00:00",
+                "closed_at": "2026-03-05T14:35:00+00:00",
+                "holding_period_bars": 3,
+                "average_cost": 100.0,
+                "exit_price": 105.0,
+                "max_quantity": 10.0,
+                "resize_count": 1,
+                "realized_pnl": 45.0,
+                "realized_return": 0.045,
+                "total_commission": 2.0,
+                "total_slippage_cost": 1.0,
+                "total_transaction_cost": 3.0,
+                "exit_reason": "rebalance_exit",
+                "exit_rule_id": None,
             }
         ]
     )
@@ -189,23 +213,48 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
             "trades": 2,
             "initial_cash": 100000.0,
             "final_equity": 112000.0,
+            "gross_total_return": 0.121,
+            "gross_annualized_return": 0.301,
+            "total_commission": 2.0,
+            "total_slippage_cost": 1.0,
+            "total_transaction_cost": 3.0,
+            "cost_drag_bps": 0.3,
+            "avg_gross_exposure": 0.01,
+            "avg_net_exposure": 0.01,
+            "sortino_ratio": 1.8,
+            "calmar_ratio": 3.0,
+            "closed_positions": 1,
+            "winning_positions": 1,
+            "losing_positions": 0,
+            "hit_rate": 1.0,
+            "avg_win_pnl": 45.0,
+            "avg_loss_pnl": 0.0,
+            "avg_win_return": 0.045,
+            "avg_loss_return": 0.0,
+            "payoff_ratio": 0.0,
+            "profit_factor": 0.0,
+            "expectancy_pnl": 45.0,
+            "expectancy_return": 0.045,
         },
         timeseries_rows=timeseries_rows,
         rolling_metric_rows=rolling_rows,
         trade_rows=trade_rows,
+        closed_position_rows=closed_position_rows,
         selection_trace_rows=selection_rows,
         regime_trace_rows=regime_rows,
     )
 
-    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 2
+    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 4
     assert timeseries_rows.iterations == 1
     assert rolling_rows.iterations == 1
     assert trade_rows.iterations == 1
+    assert closed_position_rows.iterations == 1
     assert selection_rows.iterations == 1
     assert regime_rows.iterations == 1
     assert len(cursor.copied_tables["core.backtest_timeseries"]) == 2
     assert len(cursor.copied_tables["core.backtest_rolling_metrics"]) == 1
     assert len(cursor.copied_tables["core.backtest_trades"]) == 1
+    assert len(cursor.copied_tables["core.backtest_closed_positions"]) == 1
     assert len(cursor.copied_tables["core.backtest_selection_trace"]) == 1
     assert len(cursor.copied_tables["core.backtest_regime_trace"]) == 1
     assert cursor.copied_tables["core.backtest_timeseries"][0][4] == 0.01
@@ -214,4 +263,6 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     assert cursor.copied_tables["core.backtest_timeseries"][1][5] == 0.0095
     assert cursor.copied_tables["core.backtest_rolling_metrics"][0][2] == 63
     assert cursor.copied_tables["core.backtest_rolling_metrics"][0][3] == 63
+    assert cursor.copied_tables["core.backtest_trades"][0][-2:] == ["pos-1", "entry"]
+    assert cursor.copied_tables["core.backtest_closed_positions"][0][1] == "pos-1"
     assert any("UPDATE core.runs" in sql for sql, _ in cursor.executed)

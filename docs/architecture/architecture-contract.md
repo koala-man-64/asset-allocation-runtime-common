@@ -244,7 +244,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Version Pinning
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, but that pin must track the latest stable published contracts release rather than a manually curated lagging version.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` remains exact-pinned in `python/pyproject.toml`, and repo automation must advance `main` directly to the latest stable published contracts release whenever that pin falls behind.
 
 **Why**
 
@@ -521,7 +521,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts` and expects that pin to match the latest stable published contracts release. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also exact-pins `asset-allocation-contracts`, and automation updates `main` directly so that pin matches the latest stable published contracts release. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -577,7 +577,7 @@ Release-contract changes affect downstream upgrade flow, rollback flow, and arti
 ### Security and Dependency Audit Posture
 **Contract**
 
-The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, opens or updates a PR, and leaves the workflow red if the new pin breaks validation. CI and security workflows hard-fail whenever `python/pyproject.toml` is behind the latest stable published contracts release.
+The repo currently runs a separate dependency audit workflow using `pip-audit` on pull requests, pushes to `main`, manual dispatch, and a weekly schedule. It also runs a weekday/manual contracts-pin refresh workflow that rewrites `asset-allocation-contracts` to the latest stable published version, commits the refreshed pin directly to `main`, and only then runs validation. If the new pin breaks validation, the workflow still fails so the break is visible and must be fixed forward. CI and security workflows hard-fail whenever `python/pyproject.toml` is behind the latest stable published contracts release.
 
 **Why**
 
@@ -777,7 +777,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 | 2026-04-06 | Treat the public export list in `python/asset_allocation_runtime_common/__init__.py` as the default published API boundary for this package. | 5, 7, 9 | Active |
 | 2026-04-06 | Treat ranking, regime, strategy, and universe repositories as read-only package boundaries, with current backtest lifecycle calls recorded as the sole explicit write exception pending future confirmation. | 4, 6, 7, 10 | Active |
 | 2026-04-06 | Require this contract to be updated in the same change set as any public behavior or boundary change. | 9, 13 | Active |
-| 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance that pin to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Active |
+| 2026-04-17 | Keep `asset-allocation-contracts` exact-pinned in source but always advance `main` to the latest stable published release through repo automation; fail CI when runtime-common falls behind instead of tolerating version lag. | 6, 8, 9, 13 | Active |
 
 ## 12. Evidence Ledger
 
