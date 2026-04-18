@@ -3,6 +3,16 @@ from __future__ import annotations
 from asset_allocation_runtime_common import backtest_results
 
 
+class _RowSource:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        yield from self.rows
+
+
 class _FakeCopy:
     def __init__(self, cursor: "_FakeCursor", statement: str) -> None:
         self.cursor = cursor
@@ -68,26 +78,14 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     cursor = _FakeCursor()
     monkeypatch.setattr(backtest_results, "connect", lambda _dsn: _FakeConnection(cursor))
 
-    backtest_results.persist_backtest_results(
-        "postgresql://test",
-        run_id="run-123",
-        summary={
-            "total_return": 0.12,
-            "annualized_return": 0.3,
-            "annualized_volatility": 0.2,
-            "sharpe_ratio": 1.5,
-            "max_drawdown": -0.1,
-            "trades": 2,
-            "initial_cash": 100000.0,
-            "final_equity": 112000.0,
-        },
-        timeseries_rows=[
+    timeseries_rows = _RowSource(
+        [
             {
                 "date": "2026-03-03T14:30:00+00:00",
                 "portfolio_value": 100000.0,
                 "drawdown": 0.0,
-                "daily_return": 0.0,
-                "cumulative_return": 0.0,
+                "period_return": 0.01,
+                "cumulative_return": 0.01,
                 "cash": 100000.0,
                 "gross_exposure": 0.0,
                 "net_exposure": 0.0,
@@ -95,12 +93,29 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "commission": 0.0,
                 "slippage_cost": 0.0,
                 "trade_count": 0,
-            }
-        ],
-        rolling_metric_rows=[
+            },
+            {
+                "date": "2026-03-03T14:35:00+00:00",
+                "portfolio_value": 101000.0,
+                "drawdown": -0.002,
+                "daily_return": 0.0095,
+                "period_return": 0.0095,
+                "cumulative_return": 0.02,
+                "cash": 99000.0,
+                "gross_exposure": 0.01,
+                "net_exposure": 0.01,
+                "turnover": 0.01,
+                "commission": 1.0,
+                "slippage_cost": 0.5,
+                "trade_count": 1,
+            },
+        ]
+    )
+    rolling_rows = _RowSource(
+        [
             {
                 "date": "2026-03-03T14:30:00+00:00",
-                "window_days": 63,
+                "window_periods": 63,
                 "rolling_return": 0.0,
                 "rolling_volatility": 0.0,
                 "rolling_sharpe": 0.0,
@@ -112,8 +127,10 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "gross_exposure_avg": 0.0,
                 "net_exposure_avg": 0.0,
             }
-        ],
-        trade_rows=[
+        ]
+    )
+    trade_rows = _RowSource(
+        [
             {
                 "execution_date": "2026-03-03T14:35:00+00:00",
                 "symbol": "MSFT",
@@ -124,8 +141,10 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "slippage_cost": 0.5,
                 "cash_after": 98998.5,
             }
-        ],
-        selection_trace_rows=[
+        ]
+    )
+    selection_rows = _RowSource(
+        [
             {
                 "rebalance_ts": "2026-03-03T14:30:00+00:00",
                 "ordinal": 1,
@@ -134,8 +153,10 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "selected": True,
                 "target_weight": 0.5,
             }
-        ],
-        regime_trace_rows=[
+        ]
+    )
+    regime_rows = _RowSource(
+        [
             {
                 "date": "2026-03-03T14:30:00+00:00",
                 "session_date": "2026-03-03",
@@ -153,12 +174,44 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "blocked_action": None,
                 "exposure_multiplier": 1.0,
             }
-        ],
+        ]
     )
 
-    assert len(cursor.copied_tables["core.backtest_timeseries"]) == 1
+    backtest_results.persist_backtest_results(
+        "postgresql://test",
+        run_id="run-123",
+        summary={
+            "total_return": 0.12,
+            "annualized_return": 0.3,
+            "annualized_volatility": 0.2,
+            "sharpe_ratio": 1.5,
+            "max_drawdown": -0.1,
+            "trades": 2,
+            "initial_cash": 100000.0,
+            "final_equity": 112000.0,
+        },
+        timeseries_rows=timeseries_rows,
+        rolling_metric_rows=rolling_rows,
+        trade_rows=trade_rows,
+        selection_trace_rows=selection_rows,
+        regime_trace_rows=regime_rows,
+    )
+
+    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 2
+    assert timeseries_rows.iterations == 1
+    assert rolling_rows.iterations == 1
+    assert trade_rows.iterations == 1
+    assert selection_rows.iterations == 1
+    assert regime_rows.iterations == 1
+    assert len(cursor.copied_tables["core.backtest_timeseries"]) == 2
     assert len(cursor.copied_tables["core.backtest_rolling_metrics"]) == 1
     assert len(cursor.copied_tables["core.backtest_trades"]) == 1
     assert len(cursor.copied_tables["core.backtest_selection_trace"]) == 1
     assert len(cursor.copied_tables["core.backtest_regime_trace"]) == 1
+    assert cursor.copied_tables["core.backtest_timeseries"][0][4] == 0.01
+    assert cursor.copied_tables["core.backtest_timeseries"][0][5] == 0.01
+    assert cursor.copied_tables["core.backtest_timeseries"][1][4] == 0.0095
+    assert cursor.copied_tables["core.backtest_timeseries"][1][5] == 0.0095
+    assert cursor.copied_tables["core.backtest_rolling_metrics"][0][2] == 63
+    assert cursor.copied_tables["core.backtest_rolling_metrics"][0][3] == 63
     assert any("UPDATE core.runs" in sql for sql, _ in cursor.executed)

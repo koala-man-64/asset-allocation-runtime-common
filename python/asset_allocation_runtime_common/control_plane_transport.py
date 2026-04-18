@@ -125,6 +125,17 @@ class ControlPlaneTransport:
             return None
         return response.json()
 
+    def probe(self, path: str) -> None:
+        try:
+            self.request_json("GET", path)
+        except ControlPlaneRequestError:
+            raise
+        except Exception as exc:
+            raise ControlPlaneRequestError(
+                f"GET {path} probe failed: {exc}",
+                detail=str(exc),
+            ) from exc
+
     def _extract_detail(self, response: httpx.Response) -> str:
         try:
             payload = response.json()
@@ -139,4 +150,3 @@ class ControlPlaneTransport:
         if isinstance(payload, str):
             return payload.strip()
         return response.reason_phrase
-
