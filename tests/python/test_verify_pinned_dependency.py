@@ -23,6 +23,16 @@ def load_module():
 MODULE = load_module()
 
 
+def test_repo_pyproject_declares_contracts_floor() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    pyproject_path = repo_root / "python" / "pyproject.toml"
+
+    assert (
+        MODULE.load_minimum_dependency(pyproject_path, "asset-allocation-contracts")
+        == "asset-allocation-contracts>=2.1.0"
+    )
+
+
 def test_load_minimum_dependency_returns_floor_spec(tmp_path: Path) -> None:
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(

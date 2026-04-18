@@ -16,7 +16,7 @@ The other architecture docs in this folder remain authoritative as supporting ev
 ## Versioning Rules
 
 - `asset-allocation-contracts` and `asset-allocation-runtime-common` are semver artifacts.
-- `asset-allocation-runtime-common` declares `asset-allocation-contracts` as a `>=` minimum stable version in source, and CI verifies that the declared requirement resolves from the configured package index.
+- `asset-allocation-runtime-common` currently declares `asset-allocation-contracts>=2.1.0` as its minimum stable source dependency, and CI verifies that the declared requirement resolves from the configured package index.
 - Raising the contracts minimum version is an intentional source change; installers may resolve newer published contracts versions without changing this repo.
 - The `Runtime Common Release` workflow owns the tracked `asset-allocation-runtime-common` version bump and release tag creation from `main`; the operator selects the semver increment when dispatching the workflow.
 - Control-plane, jobs, and UI pin exact dependency versions in manifests.

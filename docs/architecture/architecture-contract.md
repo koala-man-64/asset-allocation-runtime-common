@@ -250,7 +250,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Contracts Version Floor
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts` is declared as a `>=` minimum stable version in `python/pyproject.toml`, and CI plus security verification only require that the declared requirement resolves from the configured package index.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts>=2.1.0` is declared as the current minimum stable version in `python/pyproject.toml`, and CI plus security verification only require that the declared requirement resolves from the configured package index.
 
 **Why**
 
@@ -529,7 +529,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts` with a `>=` minimum stable version, and CI plus security verification only require that the declared requirement resolves. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts>=2.1.0` as the current minimum stable version, and CI plus security verification only require that the declared requirement resolves. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -781,6 +781,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
+| 2026-04-18 | Raise the `asset-allocation-contracts` minimum stable source dependency floor to `2.1.0` so runtime-common adoption requires the published `2.1.0` contracts release or newer compatible stable versions. | 6, 8, 11, 13 | Active |
 | 2026-04-17 | Widen runtime-common into the shared backend package for storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and shared runtime repositories; treat the resulting package contract as semver-major `2.0.0`. | 1, 2, 3, 4, 5, 6, 8, 9 | Active |
 | 2026-04-18 | Declare `asset-allocation-contracts` as a minimum stable version floor (`>=`) in source; CI and security verify that the declared requirement resolves, and installers may consume newer matching published versions without repo changes. | 6, 8, 9, 13 | Active |
 | 2026-04-06 | Adopt `docs/architecture/architecture-contract.md` as the authoritative living contract for this repo. Existing ADRs, ownership docs, migration notes, and runbooks become supporting evidence rather than peer architecture authorities. | All | Active |
