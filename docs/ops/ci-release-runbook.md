@@ -12,7 +12,7 @@
 - `refresh-contracts-pin.yml` runs on weekdays and manual dispatch.
 - It rewrites `asset-allocation-contracts` in `python/pyproject.toml` to the latest stable published version, commits the refreshed pin, and pushes it straight to `main`.
 - The workflow then runs install, `pip check`, `ruff`, and `pytest` against the refreshed pin. It still fails the workflow if validation breaks, but only after `main` has already been advanced so the break is visible and must be fixed forward.
-- `security.yml` enforces the same latest-stable contracts pin rule as `ci.yml` before running `pip-audit`.
+- `security.yml` verifies that the exact contracts pin already declared in `python/pyproject.toml` is published before running `pip-audit`. It does not require the pin to be the latest stable release.
 
 ## Release
 
