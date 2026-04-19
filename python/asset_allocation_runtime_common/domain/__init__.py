@@ -1,4 +1,5 @@
 from asset_allocation_runtime_common.domain.regime import (
+    CANONICAL_DEFAULT_REGIME_VERSION,
     DEFAULT_HALT_REASON,
     DEFAULT_REGIME_MODEL_NAME,
     CurveState,
@@ -10,6 +11,8 @@ from asset_allocation_runtime_common.domain.regime import (
     TargetGrossExposureByRegime,
     TrendState,
     build_regime_outputs,
+    canonical_default_regime_config_errors,
+    canonical_default_regime_model_config,
     classify_regime_row,
     compute_curve_state,
     compute_trend_state,
@@ -17,6 +20,7 @@ from asset_allocation_runtime_common.domain.regime import (
 )
 
 __all__ = [
+    "CANONICAL_DEFAULT_REGIME_VERSION",
     "DEFAULT_HALT_REASON",
     "DEFAULT_REGIME_MODEL_NAME",
     "CurveState",
@@ -28,6 +32,8 @@ __all__ = [
     "TargetGrossExposureByRegime",
     "TrendState",
     "build_regime_outputs",
+    "canonical_default_regime_config_errors",
+    "canonical_default_regime_model_config",
     "classify_regime_row",
     "compute_curve_state",
     "compute_trend_state",

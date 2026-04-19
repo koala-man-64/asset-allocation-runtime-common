@@ -24,9 +24,14 @@ def test_market_data_namespace_reexports_contract_datapaths() -> None:
 
 def test_domain_namespace_exposes_broader_regime_surface() -> None:
     policy = domain.default_regime_model_config()
+    canonical_policy = domain.canonical_default_regime_model_config()
 
     assert domain.DEFAULT_REGIME_MODEL_NAME
+    assert domain.CANONICAL_DEFAULT_REGIME_VERSION == 2
     assert policy
+    assert policy["highVolExitThreshold"] == 28.0
+    assert canonical_policy["highVolExitThreshold"] == 28.0
+    assert domain.canonical_default_regime_config_errors(canonical_policy) == []
     assert isinstance(policy["precedence"], list)
 
 

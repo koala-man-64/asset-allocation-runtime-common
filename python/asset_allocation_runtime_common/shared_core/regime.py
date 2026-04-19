@@ -5,22 +5,31 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
-from asset_allocation_contracts.regime import (
-    CANONICAL_DEFAULT_REGIME_VERSION,
-    DEFAULT_HALT_REASON,
-    DEFAULT_REGIME_MODEL_NAME,
-    CurveState,
-    RegimeBlockedAction,
-    RegimeCode,
-    RegimeModelConfig,
-    RegimePolicy,
-    RegimeStatus,
-    TargetGrossExposureByRegime,
-    TrendState,
-    canonical_default_regime_config_errors,
-    canonical_default_regime_model_config,
-    default_regime_model_config,
+from asset_allocation_contracts import regime as contracts_regime
+
+DEFAULT_HALT_REASON = contracts_regime.DEFAULT_HALT_REASON
+DEFAULT_REGIME_MODEL_NAME = contracts_regime.DEFAULT_REGIME_MODEL_NAME
+CurveState = contracts_regime.CurveState
+RegimeBlockedAction = contracts_regime.RegimeBlockedAction
+RegimeCode = contracts_regime.RegimeCode
+RegimeModelConfig = contracts_regime.RegimeModelConfig
+RegimePolicy = contracts_regime.RegimePolicy
+RegimeStatus = contracts_regime.RegimeStatus
+TargetGrossExposureByRegime = contracts_regime.TargetGrossExposureByRegime
+TrendState = contracts_regime.TrendState
+CANONICAL_DEFAULT_REGIME_VERSION = getattr(contracts_regime, "CANONICAL_DEFAULT_REGIME_VERSION", 2)
+
+_contracts_canonical_default_regime_config_errors = getattr(
+    contracts_regime,
+    "canonical_default_regime_config_errors",
+    None,
 )
+_contracts_canonical_default_regime_model_config = getattr(
+    contracts_regime,
+    "canonical_default_regime_model_config",
+    None,
+)
+_contracts_default_regime_model_config = contracts_regime.default_regime_model_config
 
 __all__ = [
     "DEFAULT_HALT_REASON",
@@ -43,6 +52,47 @@ __all__ = [
     "default_regime_model_config",
     "next_business_session",
 ]
+
+
+def canonical_default_regime_model_config() -> dict[str, Any]:
+    if callable(_contracts_canonical_default_regime_model_config):
+        raw = _contracts_canonical_default_regime_model_config()
+    else:
+        raw = _contracts_default_regime_model_config()
+        raw = {
+            **raw,
+            "highVolExitThreshold": raw.get("highVolEnterThreshold", 28.0),
+        }
+    return RegimeModelConfig.model_validate(raw).model_dump(mode="json")
+
+
+def canonical_default_regime_config_errors(
+    config: RegimeModelConfig | Mapping[str, Any] | None = None,
+) -> list[str]:
+    if callable(_contracts_canonical_default_regime_config_errors):
+        return list(_contracts_canonical_default_regime_config_errors(config))
+
+    expected = canonical_default_regime_model_config()
+    actual = _resolve_regime_config(config).model_dump(mode="json")
+    return [
+        f"{key} must be {expected[key]!r} (got {actual[key]!r})"
+        for key in expected
+        if actual.get(key) != expected.get(key)
+    ]
+
+
+def default_regime_model_config() -> dict[str, Any]:
+    return canonical_default_regime_model_config()
+
+
+def _resolve_regime_config(config: RegimeModelConfig | Mapping[str, Any] | None = None) -> RegimeModelConfig:
+    if isinstance(config, RegimeModelConfig):
+        return config
+
+    merged = canonical_default_regime_model_config()
+    if config:
+        merged.update(dict(config))
+    return RegimeModelConfig.model_validate(merged)
 
 
 def _calculate_easter_sunday(year: int) -> date:
@@ -139,7 +189,7 @@ def _safe_int(value: Any) -> int | None:
 
 
 def compute_trend_state(return_20d: Any, *, config: RegimeModelConfig | Mapping[str, Any] | None = None) -> TrendState:
-    cfg = config if isinstance(config, RegimeModelConfig) else RegimeModelConfig.model_validate(config or {})
+    cfg = _resolve_regime_config(config)
     value = _safe_float(return_20d)
     if value is None:
         return "near_zero"
@@ -151,7 +201,7 @@ def compute_trend_state(return_20d: Any, *, config: RegimeModelConfig | Mapping[
 
 
 def compute_curve_state(vix_slope: Any, *, config: RegimeModelConfig | Mapping[str, Any] | None = None) -> CurveState:
-    cfg = config if isinstance(config, RegimeModelConfig) else RegimeModelConfig.model_validate(config or {})
+    cfg = _resolve_regime_config(config)
     value = _safe_float(vix_slope)
     if value is None:
         return "flat"
@@ -172,7 +222,7 @@ def classify_regime_row(
     prev_confirmed_regime: RegimeCode | None = None,
     config: RegimeModelConfig | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    cfg = config if isinstance(config, RegimeModelConfig) else RegimeModelConfig.model_validate(config or {})
+    cfg = _resolve_regime_config(config)
     inputs_complete = bool(row.get("inputs_complete_flag"))
     if not inputs_complete:
         return {
@@ -264,7 +314,7 @@ def build_regime_outputs(
     config: RegimeModelConfig | Mapping[str, Any] | None = None,
     computed_at: datetime | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    cfg = config if isinstance(config, RegimeModelConfig) else RegimeModelConfig.model_validate(config or {})
+    cfg = _resolve_regime_config(config)
     if inputs.empty:
         empty_history = pd.DataFrame(
             columns=[
