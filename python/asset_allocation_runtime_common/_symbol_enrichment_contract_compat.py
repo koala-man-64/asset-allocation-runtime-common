@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Compatibility shim for local editable contracts installs that are still on
-# 2.2.x. The published 2.3.0 contracts wheel already includes these models.
+# 2.2.x. Published contracts wheels already include these models.
 
 SymbolCleanupStatus = Literal["queued", "running", "completed", "failed"]
 SymbolWorkStatus = Literal["queued", "claimed", "completed", "failed"]
