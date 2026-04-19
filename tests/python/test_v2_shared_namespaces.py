@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
 
 from asset_allocation_contracts.paths import DataPaths as ContractDataPaths
 from asset_allocation_runtime_common import backtesting, domain, foundation, market_data, providers
@@ -26,6 +28,17 @@ def test_domain_namespace_exposes_broader_regime_surface() -> None:
     assert domain.DEFAULT_REGIME_MODEL_NAME
     assert policy
     assert isinstance(policy["precedence"], list)
+
+
+def test_top_level_package_keeps_symbol_enrichment_repository_lazy() -> None:
+    sys.modules.pop("asset_allocation_runtime_common.symbol_enrichment_repository", None)
+    package = importlib.import_module("asset_allocation_runtime_common")
+
+    assert "asset_allocation_runtime_common.symbol_enrichment_repository" not in sys.modules
+    assert package.RegimeRepository.__name__ == "RegimeRepository"
+
+    _ = package.SymbolEnrichmentRepository
+    assert "asset_allocation_runtime_common.symbol_enrichment_repository" in sys.modules
 
 
 def test_configure_logging_defaults_when_env_is_unset(monkeypatch) -> None:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
-from pandas.tseries.offsets import BDay
 from asset_allocation_contracts.regime import (
+    CANONICAL_DEFAULT_REGIME_VERSION,
     DEFAULT_HALT_REASON,
     DEFAULT_REGIME_MODEL_NAME,
     CurveState,
@@ -17,6 +17,8 @@ from asset_allocation_contracts.regime import (
     RegimeStatus,
     TargetGrossExposureByRegime,
     TrendState,
+    canonical_default_regime_config_errors,
+    canonical_default_regime_model_config,
     default_regime_model_config,
 )
 
@@ -26,6 +28,7 @@ __all__ = [
     "CurveState",
     "RegimeBlockedAction",
     "RegimeCode",
+    "CANONICAL_DEFAULT_REGIME_VERSION",
     "RegimeModelConfig",
     "RegimePolicy",
     "RegimeStatus",
@@ -35,8 +38,82 @@ __all__ = [
     "classify_regime_row",
     "compute_curve_state",
     "compute_trend_state",
+    "canonical_default_regime_config_errors",
+    "canonical_default_regime_model_config",
     "default_regime_model_config",
+    "next_business_session",
 ]
+
+
+def _calculate_easter_sunday(year: int) -> date:
+    # Anonymous Gregorian algorithm.
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _observed_fixed_holiday(year: int, month: int, day: int) -> date:
+    holiday = date(year, month, day)
+    if holiday.weekday() == 5:
+        return holiday - timedelta(days=1)
+    if holiday.weekday() == 6:
+        return holiday + timedelta(days=1)
+    return holiday
+
+
+def _nth_weekday_of_month(year: int, month: int, weekday: int, occurrence: int) -> date:
+    current = date(year, month, 1)
+    while current.weekday() != weekday:
+        current += timedelta(days=1)
+    current += timedelta(days=7 * (occurrence - 1))
+    return current
+
+
+def _last_weekday_of_month(year: int, month: int, weekday: int) -> date:
+    if month == 12:
+        current = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        current = date(year, month + 1, 1) - timedelta(days=1)
+    while current.weekday() != weekday:
+        current -= timedelta(days=1)
+    return current
+
+
+def _is_us_equity_market_holiday(value: date) -> bool:
+    year = value.year
+    holidays = {
+        _observed_fixed_holiday(year, 1, 1),
+        _nth_weekday_of_month(year, 1, 0, 3),  # Martin Luther King Jr. Day
+        _nth_weekday_of_month(year, 2, 0, 3),  # Presidents Day
+        _calculate_easter_sunday(year) - timedelta(days=2),  # Good Friday
+        _last_weekday_of_month(year, 5, 0),  # Memorial Day
+        _observed_fixed_holiday(year, 7, 4),
+        _nth_weekday_of_month(year, 9, 0, 1),  # Labor Day
+        _nth_weekday_of_month(year, 11, 3, 4),  # Thanksgiving
+        _observed_fixed_holiday(year, 12, 25),
+    }
+    if year >= 2022:
+        holidays.add(_observed_fixed_holiday(year, 6, 19))
+    return value in holidays
+
+
+def next_business_session(as_of_date: date) -> date:
+    current = as_of_date + timedelta(days=1)
+    while current.weekday() >= 5 or _is_us_equity_market_holiday(current):
+        current += timedelta(days=1)
+    return current
 
 
 def _safe_float(value: Any) -> float | None:
@@ -85,6 +162,10 @@ def compute_curve_state(vix_slope: Any, *, config: RegimeModelConfig | Mapping[s
     return "flat"
 
 
+def _uses_high_vol_transition_band(config: RegimeModelConfig) -> bool:
+    return float(config.highVolExitThreshold) < float(config.highVolEnterThreshold)
+
+
 def classify_regime_row(
     row: Mapping[str, Any],
     *,
@@ -120,11 +201,15 @@ def classify_regime_row(
     regime_status: RegimeStatus
     matched_rule_id: str | None
 
-    if rvol_10d_ann is not None and rvol_10d_ann >= cfg.highVolEnterThreshold and curve_state == "inverted":
+    if rvol_10d_ann is not None and rvol_10d_ann > cfg.highVolEnterThreshold and curve_state == "inverted":
         regime_code = "high_vol"
         regime_status = "confirmed"
         matched_rule_id = "high_vol"
-    elif rvol_10d_ann is not None and cfg.highVolExitThreshold <= rvol_10d_ann < cfg.highVolEnterThreshold:
+    elif (
+        rvol_10d_ann is not None
+        and _uses_high_vol_transition_band(cfg)
+        and cfg.highVolExitThreshold <= rvol_10d_ann < cfg.highVolEnterThreshold
+    ):
         regime_code = prev_confirmed_regime or "unclassified"
         regime_status = "transition" if prev_confirmed_regime else "unclassified"
         matched_rule_id = "transition_band"
@@ -222,15 +307,7 @@ def build_regime_outputs(
     frame["as_of_date"] = pd.to_datetime(frame["as_of_date"], errors="coerce").dt.date
     frame = frame.dropna(subset=["as_of_date"]).sort_values("as_of_date").reset_index(drop=True)
 
-    as_of_dates = frame["as_of_date"].tolist()
-    effective_dates: list[date] = []
-    for index, as_of_date in enumerate(as_of_dates):
-        if index < len(as_of_dates) - 1:
-            effective_dates.append(as_of_dates[index + 1])
-            continue
-        next_business = (pd.Timestamp(as_of_date) + BDay(1)).date()
-        effective_dates.append(next_business)
-    frame["effective_from_date"] = effective_dates
+    frame["effective_from_date"] = [next_business_session(as_of_date) for as_of_date in frame["as_of_date"].tolist()]
 
     history_rows: list[dict[str, Any]] = []
     transition_rows: list[dict[str, Any]] = []

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from asset_allocation_contracts.symbol_enrichment import (
-    SymbolCleanupRunSummary,
-    SymbolCleanupWorkItem,
-    SymbolEnrichmentResolveRequest,
-    SymbolEnrichmentResolveResponse,
-)
+try:
+    from asset_allocation_contracts.symbol_enrichment import (
+        SymbolCleanupRunSummary,
+        SymbolCleanupWorkItem,
+        SymbolEnrichmentResolveRequest,
+        SymbolEnrichmentResolveResponse,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "asset_allocation_contracts.symbol_enrichment":
+        raise
+    from asset_allocation_runtime_common._symbol_enrichment_contract_compat import (
+        SymbolCleanupRunSummary,
+        SymbolCleanupWorkItem,
+        SymbolEnrichmentResolveRequest,
+        SymbolEnrichmentResolveResponse,
+    )
 
 from asset_allocation_runtime_common.control_plane_transport import ControlPlaneRequestError, ControlPlaneTransport
 

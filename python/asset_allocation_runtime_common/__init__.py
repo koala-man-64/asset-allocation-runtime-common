@@ -16,7 +16,6 @@ from asset_allocation_runtime_common.strategy_repository import (
     StrategyRepository,
     normalize_strategy_config_document,
 )
-from asset_allocation_runtime_common.symbol_enrichment_repository import SymbolEnrichmentRepository
 from asset_allocation_runtime_common.universe_repository import UniverseRepository
 
 __all__ = [
@@ -35,3 +34,11 @@ __all__ = [
     "normalize_strategy_config_document",
     "persist_backtest_results",
 ]
+
+
+def __getattr__(name: str):
+    if name == "SymbolEnrichmentRepository":
+        from asset_allocation_runtime_common.symbol_enrichment_repository import SymbolEnrichmentRepository
+
+        return SymbolEnrichmentRepository
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
