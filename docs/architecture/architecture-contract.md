@@ -8,7 +8,7 @@
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
 | Canonical Baseline | `main` branch, package version `2.1.0` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
-| Last Reviewed | 2026-04-19 |
+| Last Reviewed | 2026-04-21 |
 | Change Class | Decision Capture |
 
 Evidence status used in this document:
@@ -781,7 +781,8 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
-| 2026-04-19 | Advance `asset-allocation-contracts` to the exact `2.4.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Active |
+| 2026-04-21 | Advance `asset-allocation-contracts` to the exact `3.0.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Active |
+| 2026-04-19 | Advance `asset-allocation-contracts` to the exact `2.4.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-19 | Advance `asset-allocation-contracts` to the exact `2.3.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-18 | Pin `asset-allocation-contracts` exactly to `2.1.0` in source so runtime-common publishes metadata that satisfies downstream shared-package governance before first-party installs. | 6, 8, 11, 13 | Superseded |
 | 2026-04-17 | Widen runtime-common into the shared backend package for storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and shared runtime repositories; treat the resulting package contract as semver-major `2.0.0`. | 1, 2, 3, 4, 5, 6, 8, 9 | Active |

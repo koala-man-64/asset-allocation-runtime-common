@@ -4,8 +4,12 @@ from typing import Any
 
 import httpx
 
+from asset_allocation_contracts.regime import canonical_default_regime_model_config
 from asset_allocation_runtime_common.control_plane_transport import ControlPlaneTransport, ControlPlaneTransportConfig
 from asset_allocation_runtime_common.regime_repository import RegimeRepository
+
+
+CANONICAL_REGIME_CONFIG = canonical_default_regime_model_config().model_dump(mode="json")
 
 
 class _FakeCursor:
@@ -112,7 +116,7 @@ def test_list_active_regime_model_revisions_falls_back_to_postgres_when_transpor
                 "default-regime",
                 2,
                 "Canonical regime v2",
-                {"highVolEnterThreshold": 28.0, "highVolExitThreshold": 28.0},
+                CANONICAL_REGIME_CONFIG,
                 "published",
                 "cfg-hash",
                 "2026-04-01T00:00:00Z",
@@ -137,7 +141,7 @@ def test_list_active_regime_model_revisions_falls_back_to_postgres_when_transpor
             "name": "default-regime",
             "version": 2,
             "description": "Canonical regime v2",
-            "config": {"highVolEnterThreshold": 28.0, "highVolExitThreshold": 28.0},
+            "config": CANONICAL_REGIME_CONFIG,
             "status": "published",
             "config_hash": "cfg-hash",
             "published_at": "2026-04-01T00:00:00Z",
@@ -156,7 +160,7 @@ def test_get_active_regime_model_revision_falls_back_to_postgres_on_control_plan
                 "default-regime",
                 2,
                 "Canonical regime v2",
-                {"highVolEnterThreshold": 28.0, "highVolExitThreshold": 28.0},
+                CANONICAL_REGIME_CONFIG,
                 "published",
                 "cfg-hash",
                 "2026-04-01T00:00:00Z",
@@ -182,4 +186,4 @@ def test_get_active_regime_model_revision_falls_back_to_postgres_on_control_plan
 
     assert result is not None
     assert result["version"] == 2
-    assert result["config"]["highVolExitThreshold"] == 28.0
+    assert result["config"]["activationThreshold"] == CANONICAL_REGIME_CONFIG["activationThreshold"]

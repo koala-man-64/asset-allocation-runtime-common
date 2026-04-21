@@ -23,16 +23,15 @@ def test_market_data_namespace_reexports_contract_datapaths() -> None:
 
 
 def test_domain_namespace_exposes_broader_regime_surface() -> None:
-    policy = domain.default_regime_model_config()
-    canonical_policy = domain.canonical_default_regime_model_config()
+    config = domain.default_regime_model_config()
+    canonical_config = domain.canonical_default_regime_model_config()
 
     assert domain.DEFAULT_REGIME_MODEL_NAME
-    assert domain.CANONICAL_DEFAULT_REGIME_VERSION == 2
-    assert policy
-    assert policy["highVolExitThreshold"] == 28.0
-    assert canonical_policy["highVolExitThreshold"] == 28.0
-    assert domain.canonical_default_regime_config_errors(canonical_policy) == []
-    assert isinstance(policy["precedence"], list)
+    assert domain.CANONICAL_DEFAULT_REGIME_VERSION == 3
+    assert config == canonical_config
+    assert config["activationThreshold"] == 0.6
+    assert config["signalConfigs"]["trending_up"]["displayName"] == "Trending (Up)"
+    assert domain.canonical_default_regime_config_errors(canonical_config) == []
 
 
 def test_top_level_package_keeps_symbol_enrichment_repository_lazy() -> None:
