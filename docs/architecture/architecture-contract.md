@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Active |
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
-| Canonical Baseline | `main` branch, package version `2.1.0` in `python/pyproject.toml` |
+| Canonical Baseline | `main` branch, package version `3.1.0` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
 | Last Reviewed | 2026-04-21 |
 | Change Class | Decision Capture |
