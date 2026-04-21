@@ -37,7 +37,7 @@ function Write-Utf8File {
 function Get-CurrentVersion {
     param([Parameter(Mandatory = $true)][string]$Content)
 
-    $match = [regex]::Match($Content, '(?m)^version = "(?<version>\d+\.\d+\.\d+)"$')
+    $match = [regex]::Match($Content, '(?m)^version = "(?<version>\d+\.\d+\.\d+)"\r?$')
     if (-not $match.Success) {
         throw "Could not locate the package version in python/pyproject.toml."
     }
@@ -59,6 +59,21 @@ function Replace-ExactTarget {
     }
 
     return $Content.Replace($OldValue, $NewValue)
+}
+
+function Get-SingleRegexMatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $matches = [regex]::Matches($Content, $Pattern)
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one $Description target, found $($matches.Count)."
+    }
+
+    return $matches[0]
 }
 
 $pyprojectContent = Read-RequiredFile -Path $pyprojectPath
@@ -84,8 +99,20 @@ if ($Version -eq $currentVersion) {
 
 $pyprojectOldLine = 'version = "{0}"' -f $currentVersion
 $pyprojectNewLine = 'version = "{0}"' -f $Version
-$contractOldLine = '| Canonical Baseline | `main` branch, package version `{0}` in `python/pyproject.toml` |' -f $currentVersion
-$contractNewLine = '| Canonical Baseline | `main` branch, package version `{0}` in `python/pyproject.toml` |' -f $Version
+$contractBaselineMatch = Get-SingleRegexMatch `
+    -Content $contractContent `
+    -Pattern '(?m)^(?<prefix>\| Canonical Baseline \| `main` branch, package version `)(?<version>\d+\.\d+\.\d+)(?<suffix>` in `python/pyproject\.toml` \|)\r?$' `
+    -Description "architecture contract canonical baseline line"
+$contractBaselineVersion = $contractBaselineMatch.Groups["version"].Value
+$contractOldLine = $contractBaselineMatch.Value
+$contractNewLine = '{0}{1}{2}' -f `
+    $contractBaselineMatch.Groups["prefix"].Value, `
+    $Version, `
+    $contractBaselineMatch.Groups["suffix"].Value
+
+if ($contractBaselineVersion -ne $currentVersion) {
+    Write-Warning "Architecture contract canonical baseline version '$contractBaselineVersion' does not match python/pyproject.toml version '$currentVersion'. Continuing with the requested release version."
+}
 
 $updatedPyproject = Replace-ExactTarget `
     -Content $pyprojectContent `
