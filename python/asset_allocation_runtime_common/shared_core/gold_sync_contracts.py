@@ -28,6 +28,7 @@ _MARKET_COLUMNS: tuple[str, ...] = (
     "return_5d",
     "return_20d",
     "return_60d",
+    "rsi_14d",
     "vol_20d",
     "vol_60d",
     "rolling_max_252d",

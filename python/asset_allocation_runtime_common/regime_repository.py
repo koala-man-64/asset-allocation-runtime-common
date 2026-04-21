@@ -102,6 +102,40 @@ class RegimeRepository:
                 rows = cur.fetchall()
         return [dict(zip(columns, row)) for row in rows]
 
+    def _build_snapshot_from_rows(self, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not rows:
+            return None
+
+        first = rows[0]
+        signals = [
+            {
+                "regime_code": row.get("regime_code"),
+                "display_name": row.get("display_name"),
+                "signal_state": row.get("signal_state"),
+                "score": row.get("score"),
+                "activation_threshold": row.get("activation_threshold"),
+                "is_active": row.get("is_active"),
+                "matched_rule_id": row.get("matched_rule_id"),
+                "evidence": row.get("evidence_json"),
+            }
+            for row in rows
+        ]
+        return {
+            "as_of_date": first.get("as_of_date"),
+            "effective_from_date": first.get("effective_from_date"),
+            "model_name": first.get("model_name"),
+            "model_version": first.get("model_version"),
+            "signals": signals,
+            "active_regimes": [
+                row.get("regime_code")
+                for row in rows
+                if bool(row.get("is_active"))
+            ],
+            "halt_flag": bool(first.get("halt_flag")),
+            "halt_reason": first.get("halt_reason"),
+            "computed_at": first.get("computed_at"),
+        }
+
     def _get_regime_model_revision_from_postgres(self, name: str, version: int | None = None) -> dict[str, Any] | None:
         columns = [
             "name",
@@ -248,7 +282,7 @@ class RegimeRepository:
             if not active:
                 return None
             resolved_version = int(active["version"])
-        return self._fetchone_postgres(
+        rows = self._fetchall_postgres(
             """
             SELECT
                 as_of_date,
@@ -256,21 +290,19 @@ class RegimeRepository:
                 model_name,
                 model_version,
                 regime_code,
-                regime_status,
+                display_name,
+                signal_state,
+                score,
+                activation_threshold,
+                is_active,
                 matched_rule_id,
                 halt_flag,
                 halt_reason,
-                spy_return_20d,
-                rvol_10d_ann,
-                vix_spot_close,
-                vix3m_close,
-                vix_slope,
-                trend_state,
-                curve_state,
-                vix_gt_32_streak,
+                evidence_json,
                 computed_at
             FROM gold.regime_latest
             WHERE model_name = %s AND model_version = %s
+            ORDER BY regime_code ASC
             """,
             (model_name, resolved_version),
             [
@@ -279,21 +311,19 @@ class RegimeRepository:
                 "model_name",
                 "model_version",
                 "regime_code",
-                "regime_status",
+                "display_name",
+                "signal_state",
+                "score",
+                "activation_threshold",
+                "is_active",
                 "matched_rule_id",
                 "halt_flag",
                 "halt_reason",
-                "spy_return_20d",
-                "rvol_10d_ann",
-                "vix_spot_close",
-                "vix3m_close",
-                "vix_slope",
-                "trend_state",
-                "curve_state",
-                "vix_gt_32_streak",
+                "evidence_json",
                 "computed_at",
             ],
         )
+        return self._build_snapshot_from_rows(rows)
 
     def get_regime_model_revision(self, name: str, version: int | None = None) -> dict[str, Any] | None:
         try:

@@ -25,59 +25,51 @@ def test_compute_states_use_canonical_boundaries() -> None:
     assert compute_curve_state(-0.49) == "flat"
 
 
-def test_classify_regime_row_uses_strict_high_vol_entry_and_disables_canonical_transition_band() -> None:
-    canonical_at_boundary = classify_regime_row(
+def test_classify_regime_row_activates_multiple_labels_independently() -> None:
+    row = classify_regime_row(
         {
             "inputs_complete_flag": True,
-            "return_20d": -0.05,
-            "vix_slope": -1.0,
-            "rvol_10d_ann": 28.0,
-            "vix_spot_close": 32.01,
-            "vix_gt_32_streak": 2,
-        }
-    )
-    canonical_above_boundary = classify_regime_row(
-        {
-            "inputs_complete_flag": True,
-            "return_20d": -0.05,
-            "vix_slope": -1.0,
-            "rvol_10d_ann": 28.01,
-            "vix_spot_close": 32.01,
-            "vix_gt_32_streak": 2,
-        }
-    )
-    canonical_mid_band = classify_regime_row(
-        {
-            "inputs_complete_flag": True,
-            "return_20d": 0.0,
-            "vix_slope": 0.1,
-            "rvol_10d_ann": 26.0,
-            "vix_spot_close": 24.0,
+            "spy_close": 110.0,
+            "qqq_close": 120.0,
+            "spy_sma_200d": 100.0,
+            "qqq_sma_200d": 100.0,
+            "return_20d": 0.04,
+            "vix_spot_close": 14.0,
+            "atr_14d": 2.5,
+            "bb_width_20d": 0.10,
+            "gap_atr": 0.20,
+            "volume_pct_rank_252d": 0.55,
+            "hy_oas_z_20d": 0.10,
+            "acwi_return_20d": 0.03,
+            "rates_event_flag": False,
             "vix_gt_32_streak": 0,
-        },
-        prev_confirmed_regime="trending_bear",
-    )
-    legacy_mid_band = classify_regime_row(
-        {
-            "inputs_complete_flag": True,
-            "return_20d": 0.0,
-            "vix_slope": 0.1,
-            "rvol_10d_ann": 26.0,
-            "vix_spot_close": 24.0,
-            "vix_gt_32_streak": 0,
-        },
-        prev_confirmed_regime="trending_bear",
-        config={"highVolExitThreshold": 25.0},
+        }
     )
 
-    assert canonical_at_boundary["regime_code"] == "unclassified"
-    assert canonical_at_boundary["halt_flag"] is True
-    assert canonical_above_boundary["regime_code"] == "high_vol"
-    assert canonical_mid_band["regime_status"] == "unclassified"
-    assert canonical_mid_band["matched_rule_id"] is None
-    assert legacy_mid_band["regime_code"] == "trending_bear"
-    assert legacy_mid_band["regime_status"] == "transition"
-    assert legacy_mid_band["matched_rule_id"] == "transition_band"
+    active_regimes = set(row["active_regimes"])
+    signals_by_code = {signal["regime_code"]: signal for signal in row["signals"]}
+
+    assert "trending_up" in active_regimes
+    assert "low_volatility" in active_regimes
+    assert "unclassified" not in active_regimes
+    assert signals_by_code["trending_up"]["signal_state"] == "active"
+    assert signals_by_code["macro_alignment"]["signal_state"] == "inactive"
+    assert row["halt_flag"] is False
+
+
+def test_classify_regime_row_marks_unclassified_when_inputs_are_incomplete() -> None:
+    row = classify_regime_row(
+        {
+            "inputs_complete_flag": False,
+            "return_20d": None,
+            "vix_spot_close": None,
+        }
+    )
+
+    signals_by_code = {signal["regime_code"]: signal for signal in row["signals"]}
+    assert row["active_regimes"] == ["unclassified"]
+    assert signals_by_code["unclassified"]["signal_state"] == "active"
+    assert signals_by_code["trending_up"]["signal_state"] == "insufficient_data"
 
 
 def test_next_business_session_skips_weekends_and_market_holidays() -> None:
@@ -85,39 +77,48 @@ def test_next_business_session_skips_weekends_and_market_holidays() -> None:
     assert next_business_session(pd.Timestamp("2026-04-02").date()).isoformat() == "2026-04-06"
 
 
-def test_build_regime_outputs_uses_deterministic_next_business_session_dates() -> None:
+def test_build_regime_outputs_emits_normalized_history_latest_and_enter_exit_transitions() -> None:
     inputs = pd.DataFrame(
         [
             {
                 "as_of_date": "2026-03-02",
-                "return_1d": 0.01,
+                "spy_close": 110.0,
+                "qqq_close": 120.0,
+                "spy_sma_200d": 100.0,
+                "qqq_sma_200d": 100.0,
                 "return_20d": 0.04,
-                "rvol_10d_ann": 12.0,
-                "vix_spot_close": 18.0,
-                "vix3m_close": 18.7,
-                "vix_slope": 0.7,
+                "acwi_return_20d": 0.03,
+                "atr_14d": 2.5,
+                "bb_width_20d": 0.10,
+                "gap_atr": 0.20,
+                "volume_pct_rank_252d": 0.55,
+                "vix_spot_close": 14.0,
+                "vix3m_close": 15.0,
+                "vix_slope": 1.0,
+                "hy_oas_z_20d": 0.10,
+                "rates_event_flag": False,
+                "rsi_14d": 74.0,
                 "vix_gt_32_streak": 0,
                 "inputs_complete_flag": True,
             },
             {
                 "as_of_date": "2026-03-04",
-                "return_1d": -0.02,
+                "spy_close": 90.0,
+                "qqq_close": 92.0,
+                "spy_sma_200d": 100.0,
+                "qqq_sma_200d": 100.0,
                 "return_20d": -0.05,
-                "rvol_10d_ann": 18.0,
-                "vix_spot_close": 24.0,
-                "vix3m_close": 23.2,
-                "vix_slope": -0.8,
-                "vix_gt_32_streak": 0,
-                "inputs_complete_flag": True,
-            },
-            {
-                "as_of_date": "2026-04-02",
-                "return_1d": 0.01,
-                "return_20d": 0.03,
-                "rvol_10d_ann": 14.0,
-                "vix_spot_close": 19.0,
-                "vix3m_close": 19.8,
-                "vix_slope": 0.8,
+                "acwi_return_20d": -0.04,
+                "atr_14d": 4.5,
+                "bb_width_20d": 0.16,
+                "gap_atr": 0.85,
+                "volume_pct_rank_252d": 0.10,
+                "vix_spot_close": 28.0,
+                "vix3m_close": 26.5,
+                "vix_slope": -1.5,
+                "hy_oas_z_20d": 1.5,
+                "rates_event_flag": True,
+                "rsi_14d": 42.0,
                 "vix_gt_32_streak": 0,
                 "inputs_complete_flag": True,
             },
@@ -127,12 +128,21 @@ def test_build_regime_outputs_uses_deterministic_next_business_session_dates() -
     history, latest, transitions = build_regime_outputs(
         inputs,
         model_name="default-regime",
-        model_version=2,
+        model_version=3,
         computed_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
     )
 
-    assert history["effective_from_date"].tolist()[0].isoformat() == "2026-03-03"
-    assert history["effective_from_date"].tolist()[1].isoformat() == "2026-03-05"
-    assert history["effective_from_date"].tolist()[2].isoformat() == "2026-04-06"
-    assert latest.iloc[0]["as_of_date"].isoformat() == "2026-04-02"
-    assert transitions["new_regime_code"].tolist() == ["trending_bull", "trending_bear", "trending_bull"]
+    assert len(history) == 16
+    assert history["effective_from_date"].drop_duplicates().tolist()[0].isoformat() == "2026-03-03"
+    assert history["effective_from_date"].drop_duplicates().tolist()[1].isoformat() == "2026-03-05"
+    assert latest["as_of_date"].nunique() == 1
+    assert latest.iloc[0]["as_of_date"].isoformat() == "2026-03-04"
+    assert latest["regime_code"].nunique() == 8
+
+    transition_pairs = {
+        (row["regime_code"], row["transition_type"])
+        for row in transitions.to_dict("records")
+    }
+    assert ("trending_up", "entered") in transition_pairs
+    assert ("trending_up", "exited") in transition_pairs
+    assert ("trending_down", "entered") in transition_pairs
