@@ -20,13 +20,13 @@ dependencies = [
     "psycopg==3.3.3",
     "pydantic==2.12.5",
     "pydantic-settings==2.13.1",
-    "python-dotenv==1.2.1",
+    "python-dotenv==1.2.2",
     "requests==2.33.0",
 ]
 
 [project.optional-dependencies]
 test = [
-    "pytest==8.4.2",
+    "pytest==9.0.3",
     "ruff==0.12.12",
 ]
 
