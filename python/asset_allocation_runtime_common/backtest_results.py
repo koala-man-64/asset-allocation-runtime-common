@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Iterable, Sequence
 
 from asset_allocation_runtime_common.postgres import connect, copy_rows
 
 
-BACKTEST_RESULTS_SCHEMA_VERSION = 4
+BACKTEST_RESULTS_SCHEMA_VERSION = 5
 
 _SUMMARY_COLUMNS = [
     "run_id",
@@ -122,15 +123,11 @@ _REGIME_TRACE_COLUMNS = [
     "model_version",
     "as_of_date",
     "effective_from_date",
-    "regime_code",
-    "regime_status",
-    "matched_rule_id",
+    "primary_regime_code",
     "halt_flag",
     "halt_reason",
-    "blocked",
-    "blocked_reason",
-    "blocked_action",
-    "exposure_multiplier",
+    "active_regimes_json",
+    "signals_json",
 ]
 
 
@@ -279,15 +276,11 @@ def _build_regime_trace_row(run_id: str, row: dict[str, Any], _index: int) -> li
         row.get("model_version"),
         row.get("as_of_date"),
         row.get("effective_from_date"),
-        row.get("regime_code"),
-        row.get("regime_status"),
-        row.get("matched_rule_id"),
+        row.get("primary_regime_code"),
         row.get("halt_flag"),
         row.get("halt_reason"),
-        row.get("blocked"),
-        row.get("blocked_reason"),
-        row.get("blocked_action"),
-        row.get("exposure_multiplier"),
+        json.dumps(list(row.get("active_regimes") or []), sort_keys=False),
+        json.dumps(list(row.get("signals") or []), sort_keys=True),
     ]
 
 

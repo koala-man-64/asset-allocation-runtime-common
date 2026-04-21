@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from asset_allocation_runtime_common import backtest_results
 
 
@@ -188,15 +190,22 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
                 "model_version": 1,
                 "as_of_date": "2026-03-03",
                 "effective_from_date": "2026-03-03",
-                "regime_code": "trending_bull",
-                "regime_status": "confirmed",
-                "matched_rule_id": "bull",
+                "primary_regime_code": "trending_up",
                 "halt_flag": False,
                 "halt_reason": None,
-                "blocked": False,
-                "blocked_reason": None,
-                "blocked_action": None,
-                "exposure_multiplier": 1.0,
+                "active_regimes": ["trending_up", "low_volatility"],
+                "signals": [
+                    {
+                        "regime_code": "trending_up",
+                        "display_name": "Trending (Up)",
+                        "signal_state": "active",
+                        "score": 0.9,
+                        "activation_threshold": 0.6,
+                        "is_active": True,
+                        "matched_rule_id": "trending_up",
+                        "evidence": {"spy_above_sma_200": True},
+                    }
+                ],
             }
         ]
     )
@@ -244,7 +253,7 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
         regime_trace_rows=regime_rows,
     )
 
-    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 4
+    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 5
     assert timeseries_rows.iterations == 1
     assert rolling_rows.iterations == 1
     assert trade_rows.iterations == 1
@@ -265,4 +274,8 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     assert cursor.copied_tables["core.backtest_rolling_metrics"][0][3] == 63
     assert cursor.copied_tables["core.backtest_trades"][0][-2:] == ["pos-1", "entry"]
     assert cursor.copied_tables["core.backtest_closed_positions"][0][1] == "pos-1"
+    regime_trace_row = cursor.copied_tables["core.backtest_regime_trace"][0]
+    assert regime_trace_row[7] == "trending_up"
+    assert json.loads(regime_trace_row[10]) == ["trending_up", "low_volatility"]
+    assert json.loads(regime_trace_row[11])[0]["regime_code"] == "trending_up"
     assert any("UPDATE core.runs" in sql for sql, _ in cursor.executed)
