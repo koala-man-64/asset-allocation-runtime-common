@@ -20,7 +20,7 @@ Evidence status used in this document:
 
 This document is the authoritative architecture and functionality contract for `asset-allocation-runtime-common`. It defines what this repository exists to do, what it must keep doing, what it must not absorb, and how future changes are expected to preserve package behavior for its consumers.
 
-This repository is a versioned Python package. It is not a deployable service, a control-plane API repo, a jobs scheduler, or an infrastructure repo. Its scope is the shared backend package consumed by the split Asset Allocation Python runtimes: foundation modules, provider adapters, market-data helpers, extracted backtesting helpers, shared runtime repositories, transport/auth, and pure transforms. Supporting docs such as the boundary ADR, ownership map, migration ledger, runbooks, and release notes remain valid, but they are supporting evidence rather than peer authorities.
+This repository is a versioned Python package. It is not a deployable service, a control-plane API repo, a jobs scheduler, or an infrastructure repo. Its scope is the shared backend package consumed by the split Asset Allocation Python runtimes: foundation modules, provider adapters, market-data helpers, extracted backtesting helpers, shared runtime repositories, control-plane transport/auth, ACA job-metadata normalization, strategy publication signal clients, and pure transforms. Supporting docs such as the boundary ADR, ownership map, migration ledger, runbooks, and release notes remain valid, but they are supporting evidence rather than peer authorities.
 
 ## 2. Why This Repo Exists
 
@@ -31,7 +31,7 @@ The split Asset Allocation system uses five repositories:
 - `asset-allocation-jobs`
 - `asset-allocation-ui`
 
-`asset-allocation-runtime-common` exists because `asset-allocation-control-plane` and `asset-allocation-jobs` had already diverged while still carrying duplicate copies of backend runtime logic. The intended design is to centralize the real shared backend layer here: managed-identity token acquisition, control-plane HTTP transport, shared runtime repositories, storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, and pure normalization helpers. This reduces drift without transferring control-plane authority or jobs entrypoints into a generic shared service.
+`asset-allocation-runtime-common` exists because `asset-allocation-control-plane` and `asset-allocation-jobs` had already diverged while still carrying duplicate copies of backend runtime logic. The intended design is to centralize the real shared backend layer here: managed-identity token acquisition, control-plane HTTP transport, shared runtime repositories, storage/runtime foundations, provider adapters, market-data helpers, extracted backtesting helpers, ACA job metadata validation, strategy publication signal clients, and pure normalization helpers. This reduces drift without transferring control-plane authority or jobs entrypoints into a generic shared service.
 
 ## 3. System Context and External Boundaries
 
@@ -78,7 +78,7 @@ Any change that adds a new top-level module, new export, or new dependency must 
 ### Control-Plane Ownership Must Stay Intact
 **Contract**
 
-This package must preserve control-plane ownership of runtime state. Ranking, regime, strategy, and universe repositories must remain control-plane HTTP clients rather than storage owners or alternate writers.
+This package must preserve control-plane ownership of runtime state. Ranking, regime, strategy, and universe repositories must remain control-plane HTTP clients rather than storage owners or alternate writers. Strategy publication signal support may submit producer requests over the internal HTTP boundary, but the control plane remains the owner of durable signal state and status transitions.
 
 **Why**
 
@@ -91,6 +91,7 @@ The split-repo design keeps operator and control-plane-owned state in `asset-all
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/strategy_publication_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/universe_repository.py`
 
 **Change Impact**
@@ -100,7 +101,7 @@ If any repository begins writing control-plane-owned state or bypassing the HTTP
 ### Read-Mostly Repositories With One Explicit Exception
 **Contract**
 
-Regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Ranking schema mutations remain blocked, but `RankingRepository` now also carries the ranking-refresh claim/complete/fail workflow. `BacktestRepository` continues to own backtest run lifecycle calls, and `ResultsRepository` exposes the semantic reconcile trigger for ranking freshness and canonical backtest freshness.
+Regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Ranking schema mutations remain blocked, but `RankingRepository` now also carries the ranking-refresh claim/complete/fail workflow. `BacktestRepository` continues to own backtest run lifecycle calls, `ResultsRepository` exposes the semantic reconcile trigger for ranking freshness and canonical backtest freshness, and `StrategyPublicationRepository` submits producer-only regime publication reconcile signals.
 
 **Why**
 
@@ -111,6 +112,7 @@ The code and tests enforce blocked mutations for most domain repositories, while
 - `Verified`: `python/asset_allocation_runtime_common/backtest_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/strategy_publication_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/universe_repository.py`
 - `Verified`: `tests/python/test_backtest_repository.py`
@@ -781,7 +783,8 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
-| 2026-04-23 | Advance `asset-allocation-contracts` to the exact `3.2.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Active |
+| 2026-04-24 | Add shared ACA job metadata validation/normalization and a producer-only strategy publication signal client; advance `asset-allocation-contracts` to the exact `3.3.0` release and runtime-common to `3.4.0` for downstream adoption. | 1, 2, 4, 6, 8, 11, 13 | Active |
+| 2026-04-23 | Advance `asset-allocation-contracts` to the exact `3.2.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-21 | Advance `asset-allocation-contracts` to the exact `3.0.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-19 | Advance `asset-allocation-contracts` to the exact `2.4.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-19 | Advance `asset-allocation-contracts` to the exact `2.3.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
