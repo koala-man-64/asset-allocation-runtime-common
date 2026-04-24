@@ -39,6 +39,7 @@ __all__ = [
     "RegimeRepository",
     "ResultsRepository",
     "StrategyRepository",
+    "StrategyPublicationRepository",
     "SymbolEnrichmentRepository",
     "UniverseRepository",
     "build_access_token_provider",
