@@ -5,7 +5,7 @@
 | Repo | Owns | Explicitly Does Not Own |
 | --- | --- | --- |
 | `asset-allocation-contracts` | Python/TypeScript contracts, schemas, compatibility fixtures | Runtime IO, storage, deploy logic |
-| `asset-allocation-runtime-common` | Shared backend foundations, provider adapters, market-data helpers, extracted backtesting helpers, control-plane HTTP transport, auth helpers, shared runtime repositories, pure transforms | Control-plane API routes, control-plane authority over DB-backed state, monitoring ownership, jobs scheduling entrypoints |
+| `asset-allocation-runtime-common` | Shared backend foundations, provider adapters, market-data helpers, extracted backtesting helpers, control-plane HTTP transport, auth helpers, shared runtime repositories, ACA job-metadata normalization, producer-only strategy publication signal clients, pure transforms | Control-plane API routes, control-plane authority over DB-backed state, monitoring ownership, jobs scheduling entrypoints |
 | `asset-allocation-control-plane` | FastAPI API, control-plane monitoring, Postgres/operator state, deploy manifests, shared ops scripts | Jobs orchestration, shared backend runtime foundations |
 | `asset-allocation-jobs` | ETL, jobs orchestration, job-specific monitoring, repo-local runtime entrypoints | Control-plane-owned Postgres state, shared backend runtime foundations, deploy substrate |
 | `asset-allocation-ui` | Standalone UI, UI env bootstrap, UI deploy surface | Backend runtime helpers and control-plane internals |
