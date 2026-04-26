@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation-runtime-common"
-version = "3.4.3"
+version = "3.4.4"
 description = "Shared transport-neutral runtime helpers for the Asset Allocation split repos."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
