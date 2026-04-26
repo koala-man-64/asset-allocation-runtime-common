@@ -7,6 +7,8 @@ import asset_allocation_runtime_common.shared_core.quiver_gateway_client as quiv
 from asset_allocation_runtime_common.shared_core.quiver_gateway_client import (
     QuiverGatewayClient,
     QuiverGatewayClientConfig,
+    QuiverGatewayDisabledError,
+    QuiverGatewayRateLimitError,
     QuiverGatewayUnavailableError,
 )
 
@@ -381,3 +383,69 @@ def test_request_fails_fast_when_readiness_never_recovers(monkeypatch: pytest.Mo
 
     assert counters["warmup"] == 2
     assert counters["data"] == 0
+
+
+def test_transient_gateway_status_retries_before_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/providers/quiver/live/congress-holdings"
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503, json={"detail": "gateway warming"})
+        return httpx.Response(200, json=[{"Politician": "Test User"}])
+
+    monkeypatch.setattr(quiver_gateway_client_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(quiver_gateway_client_module.random, "uniform", lambda _start, _end: 0.0)
+
+    client = _build_client(transport=httpx.MockTransport(handler))
+    try:
+        payload = client.get_live_congress_holdings()
+    finally:
+        client.close()
+
+    assert payload == [{"Politician": "Test User"}]
+    assert calls == 2
+
+
+def test_rate_limit_is_not_retried() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/providers/quiver/live/congress-holdings"
+        calls += 1
+        return httpx.Response(429, json={"detail": "rate limited"})
+
+    client = _build_client(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(QuiverGatewayRateLimitError):
+            client.get_live_congress_holdings()
+    finally:
+        client.close()
+
+    assert calls == 1
+
+
+def test_disabled_gateway_response_is_typed_redacted_and_not_retried() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/providers/quiver/live/congress-holdings"
+        calls += 1
+        return httpx.Response(503, json={"detail": "Quiver provider disabled apiKey=provider-secret"})
+
+    client = _build_client(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(QuiverGatewayDisabledError) as exc_info:
+            client.get_live_congress_holdings()
+    finally:
+        client.close()
+
+    assert isinstance(exc_info.value, QuiverGatewayUnavailableError)
+    assert calls == 1
+    assert "provider-secret" not in str(exc_info.value)
+    assert "provider-secret" not in str(exc_info.value.detail)
+    assert "provider-secret" not in str(exc_info.value.payload)
