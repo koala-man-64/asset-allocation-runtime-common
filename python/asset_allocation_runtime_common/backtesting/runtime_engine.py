@@ -38,6 +38,7 @@ _DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 _TRADING_DAYS_PER_YEAR = 252.0
 _TRADING_MINUTES_PER_DAY = 390.0
 _DEFAULT_ROLLING_WINDOW_DAYS = 63
+_RANKING_COLUMNS = ["rebalance_ts", "symbol", "score", "ordinal", "selected", "target_weight", "target_notional"]
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,12 @@ class ResolvedBacktestDefinition:
     regime_model_name: str | None = None
     regime_model_version: int | None = None
     regime_model_config: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class RebalanceTarget:
+    target_weight: float
+    target_notional: float | None = None
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -416,6 +423,7 @@ def validate_backtest_submission(
     end_ts: datetime,
     bar_size: str | None,
 ) -> list[datetime]:
+    _validate_strategy_execution_policy(definition)
     table_specs = universe_service._load_gold_table_specs(dsn)
     required = _required_columns(definition)
     missing_tables = [name for name in required if name not in table_specs]
@@ -467,6 +475,132 @@ def validate_backtest_submission(
     return schedule
 
 
+def _empty_ranking_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=_RANKING_COLUMNS)
+
+
+def _validate_strategy_execution_policy(definition: ResolvedBacktestDefinition) -> None:
+    strategy_config = definition.strategy_config
+    if not getattr(strategy_config, "longOnly", True):
+        raise ValueError("Strategy backtests only support longOnly=true until short accounting is implemented.")
+
+    policy = getattr(strategy_config, "positionPolicy", None)
+    if policy is None:
+        return
+
+    allowed_asset_classes = set(getattr(policy, "allowedAssetClasses", None) or ["equity"])
+    if "equity" not in allowed_asset_classes:
+        raise ValueError("Strategy backtests support equity execution only; positionPolicy.allowedAssetClasses must include 'equity'.")
+
+
+def _position_policy(definition: ResolvedBacktestDefinition) -> Any | None:
+    return getattr(definition.strategy_config, "positionPolicy", None)
+
+
+def _target_selection_count(definition: ResolvedBacktestDefinition, available_count: int) -> int:
+    policy = _position_policy(definition)
+    top_n = min(int(definition.strategy_config.topN), int(available_count))
+    max_open_positions = getattr(policy, "maxOpenPositions", None) if policy is not None else None
+    if max_open_positions is not None:
+        top_n = min(top_n, int(max_open_positions))
+    return max(top_n, 0)
+
+
+def _target_size_for_selection(
+    definition: ResolvedBacktestDefinition,
+    *,
+    selected_count: int,
+    target_weight_multiplier: float,
+) -> tuple[float, float | None]:
+    if selected_count <= 0:
+        return 0.0, None
+
+    policy = _position_policy(definition)
+    if policy is None or getattr(policy, "targetPositionSize", None) is None:
+        return float(target_weight_multiplier) / selected_count, None
+
+    target_size = policy.targetPositionSize
+    max_size = getattr(policy, "maxPositionSize", None)
+    if target_size.mode == "pct_of_allocatable_capital":
+        target_weight = float(target_weight_multiplier) * (float(target_size.value) / 100.0)
+        if max_size is not None and max_size.mode == "pct_of_allocatable_capital":
+            target_weight = min(target_weight, float(target_weight_multiplier) * (float(max_size.value) / 100.0))
+        return target_weight, None
+
+    target_notional = float(target_size.value)
+    if max_size is not None and max_size.mode == "notional_base_ccy":
+        target_notional = min(target_notional, float(max_size.value))
+    return 0.0, target_notional
+
+
+def _pending_targets_from_records(records: Iterable[dict[str, Any]]) -> dict[str, RebalanceTarget]:
+    targets: dict[str, RebalanceTarget] = {}
+    for row in records:
+        if not bool(row.get("selected")):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        targets[symbol] = RebalanceTarget(
+            target_weight=float(row.get("target_weight") or 0.0),
+            target_notional=_maybe_float(row.get("target_notional")),
+        )
+    return targets
+
+
+def _apply_position_size_cap(
+    target_notional: float,
+    *,
+    market_equity_open: float,
+    definition: ResolvedBacktestDefinition,
+) -> float:
+    policy = _position_policy(definition)
+    max_size = getattr(policy, "maxPositionSize", None) if policy is not None else None
+    if max_size is None:
+        return target_notional
+    if max_size.mode == "pct_of_allocatable_capital":
+        return min(target_notional, market_equity_open * (float(max_size.value) / 100.0))
+    return min(target_notional, float(max_size.value))
+
+
+def _target_quantities_for_pending_targets(
+    pending_targets: dict[str, RebalanceTarget],
+    *,
+    snapshot_index: dict[str, pd.Series],
+    market_equity_open: float,
+    definition: ResolvedBacktestDefinition,
+) -> dict[str, float]:
+    target_notional_by_symbol: dict[str, float] = {}
+    open_prices: dict[str, float] = {}
+    for symbol, target in pending_targets.items():
+        row = _market_row(snapshot_index, symbol)
+        if row is None:
+            continue
+        open_price = _maybe_float(row.get(f"{_PRICE_TABLE}__open")) or _maybe_float(row.get(f"{_PRICE_TABLE}__close"))
+        if open_price is None or open_price <= 0:
+            continue
+        target_notional = (
+            float(target.target_notional)
+            if target.target_notional is not None
+            else market_equity_open * float(target.target_weight)
+        )
+        target_notional_by_symbol[symbol] = _apply_position_size_cap(
+            target_notional,
+            market_equity_open=market_equity_open,
+            definition=definition,
+        )
+        open_prices[symbol] = open_price
+
+    total_target_notional = sum(target_notional_by_symbol.values())
+    if total_target_notional > market_equity_open + 1e-6:
+        raise ValueError("Long-only position policy target exposure exceeds available strategy capital.")
+
+    return {
+        symbol: target_notional / open_prices[symbol]
+        for symbol, target_notional in target_notional_by_symbol.items()
+    }
+
+
 def _score_snapshot(
     snapshot: pd.DataFrame,
     *,
@@ -475,13 +609,13 @@ def _score_snapshot(
     target_weight_multiplier: float = 1.0,
 ) -> pd.DataFrame:
     if snapshot.empty:
-        return pd.DataFrame(columns=["symbol", "score", "ordinal", "selected", "target_weight", "rebalance_ts"])
+        return _empty_ranking_frame()
     filtered = snapshot[
         ranking_service._evaluate_universe_mask(snapshot, definition.strategy_universe.root)
         & ranking_service._evaluate_universe_mask(snapshot, definition.ranking_universe.root)
     ].copy()
     if filtered.empty:
-        return pd.DataFrame(columns=["symbol", "score", "ordinal", "selected", "target_weight", "rebalance_ts"])
+        return _empty_ranking_frame()
 
     group_scores: list[tuple[str, float, pd.Series]] = []
     required_masks: list[pd.Series] = []
@@ -495,7 +629,7 @@ def _score_snapshot(
         filtered = filtered[keep_mask].copy()
         group_scores = [(name, weight, series.loc[filtered.index]) for name, weight, series in group_scores]
         if filtered.empty:
-            return pd.DataFrame(columns=["symbol", "score", "ordinal", "selected", "target_weight", "rebalance_ts"])
+            return _empty_ranking_frame()
 
     weighted_total = pd.Series(0.0, index=filtered.index)
     total_weight = 0.0
@@ -512,16 +646,21 @@ def _score_snapshot(
     )
     filtered = filtered.dropna(subset=["score"]).copy()
     if filtered.empty:
-        return pd.DataFrame(columns=["symbol", "score", "ordinal", "selected", "target_weight", "rebalance_ts"])
+        return _empty_ranking_frame()
 
     filtered = filtered.sort_values(["score", "symbol"], ascending=[False, True]).reset_index(drop=True)
     filtered["ordinal"] = np.arange(1, len(filtered) + 1)
-    top_n = min(definition.strategy_config.topN, len(filtered))
+    top_n = _target_selection_count(definition, len(filtered))
     filtered["selected"] = filtered["ordinal"] <= top_n
-    target_weight = float(target_weight_multiplier) / top_n if top_n > 0 else 0.0
+    target_weight, target_notional = _target_size_for_selection(
+        definition,
+        selected_count=top_n,
+        target_weight_multiplier=target_weight_multiplier,
+    )
     filtered["target_weight"] = np.where(filtered["selected"], target_weight, 0.0)
+    filtered["target_notional"] = np.where(filtered["selected"], target_notional, np.nan)
     filtered["rebalance_ts"] = pd.Timestamp(rebalance_ts)
-    return filtered[["rebalance_ts", "symbol", "score", "ordinal", "selected", "target_weight"]]
+    return filtered[_RANKING_COLUMNS]
 
 
 def _market_row(snapshot: pd.DataFrame | dict[str, pd.Series], symbol: str) -> pd.Series | None:
@@ -1359,7 +1498,7 @@ def execute_backtest_run(
     cash = float(definition.strategy_config_raw.get("initialCash") or 100000.0)
     gross_cash = float(cash)
     positions: dict[str, PositionState] = {}
-    pending_target_weights: dict[str, float] = {}
+    pending_targets: dict[str, RebalanceTarget] = {}
     selection_trace_rows: list[dict[str, Any]] = []
     regime_trace_rows: list[dict[str, Any]] = []
     trade_rows: list[dict[str, Any]] = []
@@ -1446,11 +1585,7 @@ def execute_backtest_run(
                 )
                 initial_ranking_records = initial_ranking.to_dict("records")
                 selection_trace_rows.extend(initial_ranking_records)
-                pending_target_weights = {
-                    str(row["symbol"]): float(row["target_weight"])
-                    for row in initial_ranking_records
-                    if bool(row["selected"])
-                }
+                pending_targets = _pending_targets_from_records(initial_ranking_records)
                 first_signal_computed = True
                 continue
 
@@ -1468,17 +1603,13 @@ def execute_backtest_run(
                 market_equity_open += position.quantity * open_price
 
             target_qty_by_symbol: dict[str, float] = {}
-            if pending_target_weights:
-                for symbol, target_weight in pending_target_weights.items():
-                    row = _market_row(snapshot_index, symbol)
-                    if row is None:
-                        continue
-                    open_price = _maybe_float(row.get(f"{_PRICE_TABLE}__open")) or _maybe_float(
-                        row.get(f"{_PRICE_TABLE}__close")
-                    )
-                    if open_price is None or open_price <= 0:
-                        continue
-                    target_qty_by_symbol[symbol] = (market_equity_open * target_weight) / open_price
+            if pending_targets:
+                target_qty_by_symbol = _target_quantities_for_pending_targets(
+                    pending_targets,
+                    snapshot_index=snapshot_index,
+                    market_equity_open=market_equity_open,
+                    definition=definition,
+                )
 
             all_symbols = sorted(set(positions.keys()) | set(target_qty_by_symbol.keys()))
             for symbol in all_symbols:
@@ -1533,7 +1664,7 @@ def execute_backtest_run(
                 else:
                     positions[symbol] = updated_position
 
-            pending_target_weights = {}
+            pending_targets = {}
 
             for symbol, position in list(positions.items()):
                 row = _market_row(snapshot_index, symbol)
@@ -1637,11 +1768,7 @@ def execute_backtest_run(
                 )
                 ranking_records = ranking.to_dict("records")
                 selection_trace_rows.extend(ranking_records)
-                pending_target_weights = {
-                    str(row["symbol"]): float(row["target_weight"])
-                    for row in ranking_records
-                    if bool(row["selected"])
-                }
+                pending_targets = _pending_targets_from_records(ranking_records)
 
     timeseries = pd.DataFrame(timeseries_rows)
     trades = pd.DataFrame(trade_rows)
