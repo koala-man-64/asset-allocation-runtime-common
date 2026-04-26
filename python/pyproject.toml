@@ -9,7 +9,7 @@ description = "Shared transport-neutral runtime helpers for the Asset Allocation
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "asset-allocation-contracts==3.5.0",
+    "asset-allocation-contracts==3.7.0",
     "azure-storage-blob==12.28.0",
     "azure-identity==1.25.2",
     "deltalake==1.4.2",

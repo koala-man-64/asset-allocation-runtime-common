@@ -32,7 +32,7 @@ def test_repo_pyproject_declares_contracts_pin() -> None:
 
     assert (
         MODULE.load_pinned_dependency(pyproject_path, "asset-allocation-contracts")
-        == "asset-allocation-contracts==3.5.0"
+        == "asset-allocation-contracts==3.7.0"
     )
 
 

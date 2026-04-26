@@ -78,7 +78,7 @@ Any change that adds a new top-level module, new export, or new dependency must 
 ### Control-Plane Ownership Must Stay Intact
 **Contract**
 
-This package must preserve control-plane ownership of runtime state. Ranking, regime, strategy, and universe repositories must remain control-plane HTTP clients rather than storage owners or alternate writers. Strategy publication signal support may submit producer requests over the internal HTTP boundary, but the control plane remains the owner of durable signal state and status transitions.
+This package must preserve control-plane ownership of runtime state. Ranking, regime, strategy, and universe repositories must remain control-plane HTTP clients rather than storage owners or alternate writers. Intraday, notification, and strategy publication support may submit workflow or producer requests over the HTTP boundary, but the control plane remains the owner of durable state, delivery, execution, and status transitions.
 
 **Why**
 
@@ -91,6 +91,8 @@ The split-repo design keeps operator and control-plane-owned state in `asset-all
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/intraday_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/notification_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_publication_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/universe_repository.py`
 
@@ -101,7 +103,7 @@ If any repository begins writing control-plane-owned state or bypassing the HTTP
 ### Read-Mostly Repositories With One Explicit Exception
 **Contract**
 
-Regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Ranking schema mutations remain blocked, but `RankingRepository` now also carries the ranking-refresh claim/complete/fail workflow. `BacktestRepository` continues to own backtest run lifecycle calls, `ResultsRepository` exposes the semantic reconcile trigger for ranking freshness and canonical backtest freshness, and `StrategyPublicationRepository` submits producer-only regime publication reconcile signals.
+Regime, strategy, and universe repositories are read-only facades over control-plane HTTP. Ranking schema mutations remain blocked, but `RankingRepository` also carries the ranking-refresh claim/complete/fail workflow. `BacktestRepository` continues to own backtest run lifecycle calls, `ResultsRepository` exposes the semantic reconcile trigger for ranking freshness and canonical backtest freshness, `IntradayRepository` wraps intraday worker and watchlist HTTP workflows, `NotificationRepository` wraps notification and trade-approval HTTP workflows, and `StrategyPublicationRepository` submits producer-only regime publication reconcile signals.
 
 **Why**
 
@@ -110,12 +112,16 @@ The code and tests enforce blocked mutations for most domain repositories, while
 **Evidence**
 
 - `Verified`: `python/asset_allocation_runtime_common/backtest_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/intraday_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/notification_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_publication_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/universe_repository.py`
 - `Verified`: `tests/python/test_backtest_repository.py`
+- `Verified`: `tests/python/test_intraday_repository.py`
+- `Verified`: `tests/python/test_notification_repository.py`
 - `Verified`: `tests/python/test_ranking_repository.py`
 - `Verified`: `tests/python/test_strategy_repository.py`
 - `Verified`: `tests/python/test_universe_repository.py`
@@ -183,6 +189,8 @@ The package currently exposes the following public surface and responsibilities:
 | `domain.regime` | Shared regime domain model and transforms |
 | `backtesting.*` | Shared backtest result persistence and extracted runtime engine helpers |
 | `BacktestRepository` | Read and manage backtest run lifecycle over control-plane HTTP |
+| `IntradayRepository` | Manage intraday worker lifecycle and watchlist operations over control-plane HTTP |
+| `NotificationRepository` | Create, read, and decide notification/trade-approval workflows over control-plane HTTP |
 | `RankingRepository` | Read ranking schema state and manage ranking-refresh claims over control-plane HTTP |
 | `ResultsRepository` | Trigger semantic results freshness reconcile over control-plane HTTP |
 | `RegimeRepository` | Read regime model and current regime state over control-plane HTTP |
@@ -200,6 +208,8 @@ Future agents need one stable inventory of what the package publicly offers befo
 - `Verified`: `python/asset_allocation_runtime_common/api_gateway_auth.py`
 - `Verified`: `python/asset_allocation_runtime_common/control_plane_transport.py`
 - `Verified`: `python/asset_allocation_runtime_common/backtest_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/intraday_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/notification_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
@@ -252,7 +262,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Contracts Version Pin
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.5.0` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.7.0` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
 
 **Why**
 
@@ -323,10 +333,10 @@ These behaviors are part of the observable transport contract and are asserted b
 
 Header, error, or empty-body changes alter downstream observability and failure handling expectations and require test updates.
 
-### Read-Only Repository Access Flow
+### Repository Access Flow
 **Contract**
 
-Repository reads follow this flow: repository method -> authenticated transport call to `/api/internal/...` -> JSON payload -> optional package-level normalization -> dictionary, list, or `None` returned to the caller. For the read paths that implement it, HTTP 404 is modeled as a not-found result rather than a hard failure.
+Repository operations follow this flow: repository method -> authenticated transport call to the control-plane API -> JSON payload -> optional package-level normalization or released-contract validation -> dictionary, list, typed contract model, or `None` returned to the caller. Internal job workflows use `/api/internal/...`; operator-facing workflows such as intraday watchlist edits and notifications use the corresponding `/api/...` routes. For the read paths that implement it, HTTP 404 is modeled as a not-found result rather than a hard failure.
 
 **Why**
 
@@ -335,6 +345,8 @@ This is the core consumer flow that the package centralizes across domains.
 **Evidence**
 
 - `Verified`: `python/asset_allocation_runtime_common/backtest_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/intraday_repository.py`
+- `Verified`: `python/asset_allocation_runtime_common/notification_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/ranking_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/regime_repository.py`
 - `Verified`: `python/asset_allocation_runtime_common/strategy_repository.py`
@@ -531,7 +543,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.5.0` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.7.0` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -783,7 +795,8 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
-| 2026-04-25 | Advance `asset-allocation-contracts` to the exact `3.5.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Active |
+| 2026-04-26 | Advance `asset-allocation-contracts` to the exact `3.7.0` release and add runtime-common transport adapters for released intraday append plus notification/trade-approval contracts. | 5, 6, 8, 11, 13 | Active |
+| 2026-04-25 | Advance `asset-allocation-contracts` to the exact `3.5.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Superseded |
 | 2026-04-24 | Add shared ACA job metadata validation/normalization and a producer-only strategy publication signal client; advance `asset-allocation-contracts` to the exact `3.3.0` release and runtime-common to `3.4.0` for downstream adoption. | 1, 2, 4, 6, 8, 11, 13 | Active |
 | 2026-04-23 | Advance `asset-allocation-contracts` to the exact `3.2.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
 | 2026-04-21 | Advance `asset-allocation-contracts` to the exact `3.0.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
