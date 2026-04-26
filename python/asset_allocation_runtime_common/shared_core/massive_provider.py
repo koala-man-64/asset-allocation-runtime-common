@@ -9,6 +9,8 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import pandas as pd
 import requests
 
+from asset_allocation_runtime_common.shared_core.redaction import redact_text
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://api.massive.com"
@@ -19,6 +21,9 @@ _MAX_PAGE_LIMIT = 1000
 
 class MassiveProviderError(RuntimeError):
     """Raised when Massive ticker retrieval fails."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(redact_text(message))
 
 
 @dataclass(frozen=True)
@@ -167,7 +172,7 @@ class MassiveProvider:
         except requests.RequestException as exc:
             raise MassiveProviderError(
                 f"Massive request failed for url={url!r}: {type(exc).__name__}: {exc}"
-            ) from exc
+            ) from None
 
         try:
             payload = response.json()
