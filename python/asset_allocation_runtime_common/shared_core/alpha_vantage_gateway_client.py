@@ -3,14 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import threading
 import time
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
 import httpx
 
 from asset_allocation_runtime_common.api_gateway_auth import build_access_token_provider
+from asset_allocation_runtime_common.shared_core.redaction import (
+    redact_exception_cause,
+    redact_secrets,
+    redact_text,
+)
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
@@ -25,6 +33,8 @@ _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
 _DEFAULT_REQUEST_RETRY_ATTEMPTS = 3
 _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS = 120.0
 _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS = 300.0
+_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
+_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 300.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 _RETRYABLE_REQUEST_STATUS_CODES = {502, 503, 504}
@@ -39,10 +49,10 @@ class AlphaVantageGatewayError(RuntimeError):
         detail: Optional[str] = None,
         payload: Optional[dict[str, Any]] = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(redact_text(message))
         self.status_code = status_code
-        self.detail = detail
-        self.payload = payload
+        self.detail = redact_text(detail) if detail is not None else None
+        self.payload = redact_secrets(payload) if payload is not None else None
 
 
 class AlphaVantageGatewayAuthError(AlphaVantageGatewayError):
@@ -116,6 +126,8 @@ class AlphaVantageGatewayClientConfig:
     request_retry_attempts: int = _DEFAULT_REQUEST_RETRY_ATTEMPTS
     request_retry_base_delay_seconds: float = _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS
     request_retry_max_delay_seconds: float = _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS
+    circuit_breaker_failure_threshold: int = _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    circuit_breaker_open_seconds: float = _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS
 
 
 class AlphaVantageGatewayClient:
@@ -142,6 +154,9 @@ class AlphaVantageGatewayClient:
         self._readiness_lock = threading.Lock()
         self._readiness_attempted = False
         self._readiness_succeeded = not config.readiness_enabled
+        self._circuit_lock = threading.Lock()
+        self._circuit_failure_count = 0
+        self._circuit_open_until_monotonic = 0.0
 
     @staticmethod
     def from_env() -> "AlphaVantageGatewayClient":
@@ -200,6 +215,17 @@ class AlphaVantageGatewayClient:
             request_retry_base_delay_seconds,
             _env_float("ALPHA_VANTAGE_GATEWAY_RETRY_MAX_SECONDS", _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS),
         )
+        circuit_breaker_failure_threshold = max(
+            1,
+            _env_int(
+                "ALPHA_VANTAGE_GATEWAY_CIRCUIT_FAILURE_THRESHOLD",
+                _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+            ),
+        )
+        circuit_breaker_open_seconds = max(
+            0.0,
+            _env_float("ALPHA_VANTAGE_GATEWAY_CIRCUIT_OPEN_SECONDS", _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS),
+        )
 
         return AlphaVantageGatewayClient(
             AlphaVantageGatewayClientConfig(
@@ -217,6 +243,8 @@ class AlphaVantageGatewayClient:
                 request_retry_attempts=request_retry_attempts,
                 request_retry_base_delay_seconds=request_retry_base_delay_seconds,
                 request_retry_max_delay_seconds=request_retry_max_delay_seconds,
+                circuit_breaker_failure_threshold=circuit_breaker_failure_threshold,
+                circuit_breaker_open_seconds=circuit_breaker_open_seconds,
             )
         )
 
@@ -243,7 +271,7 @@ class AlphaVantageGatewayClient:
         except Exception as exc:
             raise AlphaVantageGatewayAuthError(
                 "Failed to acquire bearer token for the Asset Allocation API gateway."
-            ) from exc
+            ) from redact_exception_cause(exc)
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))
         if caller_job:
@@ -257,15 +285,15 @@ class AlphaVantageGatewayClient:
             payload = response.json()
         except Exception:
             text = (response.text or "").strip()
-            return text or response.reason_phrase
+            return redact_text(text or response.reason_phrase)
         if isinstance(payload, dict):
             detail = payload.get("detail")
             if isinstance(detail, str) and detail.strip():
-                return detail.strip()
-            return json.dumps(payload, ensure_ascii=False)
+                return redact_text(detail.strip())
+            return redact_text(json.dumps(redact_secrets(payload), ensure_ascii=False))
         if isinstance(payload, str) and payload.strip():
-            return payload.strip()
-        return response.reason_phrase
+            return redact_text(payload.strip())
+        return redact_text(response.reason_phrase)
 
     def _warm_up_gateway(self) -> bool:
         if not self.config.warmup_enabled:
@@ -428,13 +456,83 @@ class AlphaVantageGatewayClient:
             return 0.0
         return min(float(self.config.request_retry_max_delay_seconds), max(current * 2.0, 1.0))
 
+    def _retry_after_delay_seconds(self, response: httpx.Response) -> Optional[float]:
+        raw = _strip_or_none(response.headers.get("Retry-After"))
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except Exception:
+            pass
+        try:
+            parsed = parsedate_to_datetime(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, parsed.timestamp() - time.time())
+        except Exception:
+            return None
+
+    def _retry_sleep_seconds(self, delay_seconds: float, *, response: Optional[httpx.Response] = None) -> float:
+        max_delay = max(0.0, float(self.config.request_retry_max_delay_seconds))
+        retry_after = self._retry_after_delay_seconds(response) if response is not None else None
+        if retry_after is not None:
+            return min(max_delay, retry_after)
+
+        current = min(max_delay, max(0.0, float(delay_seconds)))
+        if current <= 0.0:
+            return 0.0
+        jitter = random.uniform(0.0, min(current * 0.25, max_delay))
+        return min(max_delay, current + jitter)
+
+    def _raise_if_circuit_open(self, *, path: str) -> None:
+        now = time.monotonic()
+        with self._circuit_lock:
+            open_until = self._circuit_open_until_monotonic
+            if open_until <= 0.0:
+                return
+            if now >= open_until:
+                self._circuit_open_until_monotonic = 0.0
+                self._circuit_failure_count = 0
+                return
+            remaining = max(0.0, open_until - now)
+
+        raise AlphaVantageGatewayUnavailableError(
+            "Alpha Vantage gateway circuit breaker is open.",
+            status_code=503,
+            detail=f"Circuit remains open for {remaining:.1f} seconds.",
+            payload={"path": path, "retry_after_seconds": round(remaining, 3)},
+        )
+
+    def _record_circuit_success(self) -> None:
+        with self._circuit_lock:
+            self._circuit_failure_count = 0
+            self._circuit_open_until_monotonic = 0.0
+
+    def _record_circuit_failure(self, *, path: str, reason: str) -> None:
+        threshold = max(1, int(self.config.circuit_breaker_failure_threshold))
+        open_seconds = max(0.0, float(self.config.circuit_breaker_open_seconds))
+        with self._circuit_lock:
+            self._circuit_failure_count += 1
+            if self._circuit_failure_count < threshold or open_seconds <= 0.0:
+                return
+            self._circuit_open_until_monotonic = time.monotonic() + open_seconds
+            logger.warning(
+                "Alpha Vantage gateway circuit breaker opened (path=%s, reason=%s, failures=%s, open_seconds=%.1f).",
+                path,
+                reason,
+                self._circuit_failure_count,
+                open_seconds,
+            )
+
     def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
         url = f"{self.config.base_url}{path}"
         attempts = max(1, int(self.config.request_retry_attempts))
         delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
 
         for attempt in range(1, attempts + 1):
+            self._raise_if_circuit_open(path=path)
             if not self._ensure_gateway_ready():
+                self._record_circuit_failure(path=path, reason="readiness")
                 raise AlphaVantageGatewayUnavailableError(
                     "API gateway readiness check failed.",
                     status_code=503,
@@ -445,41 +543,50 @@ class AlphaVantageGatewayClient:
                 resp = self._http.get(url, params=params or {}, headers=self._build_headers())
             except httpx.TimeoutException as exc:
                 if attempt < attempts:
+                    sleep_seconds = self._retry_sleep_seconds(delay_seconds)
                     logger.warning(
                         "Alpha Vantage gateway request timed out (path=%s, attempt=%s/%s, sleep=%.1fs).",
                         path,
                         attempt,
                         attempts,
-                        delay_seconds,
+                        sleep_seconds,
                     )
-                    if delay_seconds > 0.0:
-                        time.sleep(delay_seconds)
+                    if sleep_seconds > 0.0:
+                        time.sleep(sleep_seconds)
                     delay_seconds = self._retry_request_delay(delay_seconds)
                     self._reset_gateway_state()
                     continue
-                raise AlphaVantageGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
+                self._record_circuit_failure(path=path, reason="timeout")
+                raise AlphaVantageGatewayUnavailableError(
+                    f"API gateway timeout calling {path}",
+                    status_code=504,
+                    detail="Gateway request timed out.",
+                    payload={"path": path},
+                ) from redact_exception_cause(exc)
             except Exception as exc:
                 raise AlphaVantageGatewayError(
                     f"API gateway call failed: {type(exc).__name__}: {exc}", payload={"path": path}
-                ) from exc
+                ) from redact_exception_cause(exc)
 
             if resp.status_code < 400:
+                self._record_circuit_success()
                 return resp
 
             detail = self._extract_detail(resp)
             payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
             if resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES and attempt < attempts:
+                sleep_seconds = self._retry_sleep_seconds(delay_seconds, response=resp)
                 logger.warning(
                     "Alpha Vantage gateway request retrying after status=%s (path=%s, attempt=%s/%s, sleep=%.1fs, detail=%s).",
                     resp.status_code,
                     path,
                     attempt,
                     attempts,
-                    delay_seconds,
+                    sleep_seconds,
                     detail[:220],
                 )
-                if delay_seconds > 0.0:
-                    time.sleep(delay_seconds)
+                if sleep_seconds > 0.0:
+                    time.sleep(sleep_seconds)
                 delay_seconds = self._retry_request_delay(delay_seconds)
                 self._reset_gateway_state()
                 continue
@@ -496,7 +603,8 @@ class AlphaVantageGatewayClient:
                 raise AlphaVantageGatewayThrottleError(
                     detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload
                 )
-            if resp.status_code == 503:
+            if resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES:
+                self._record_circuit_failure(path=path, reason=f"status_{resp.status_code}")
                 raise AlphaVantageGatewayUnavailableError(
                     detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload
                 )
