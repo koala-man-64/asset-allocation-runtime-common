@@ -15,6 +15,16 @@ def workflow_text(name: str) -> str:
     return workflow_path(name).read_text(encoding="utf-8")
 
 
+def test_ci_requires_published_compatible_contracts_spec() -> None:
+    text = workflow_text("ci.yml")
+    assert "Verify contracts dependency spec resolves from published stable versions" in text
+    assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode published" in text
+
+
+def test_security_requires_published_compatible_contracts_spec() -> None:
+    text = workflow_text("security.yml")
+    assert "Verify contracts dependency spec resolves from published stable versions" in text
+    assert "python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode published" in text
 def test_ci_requires_exact_contracts_pin_and_built_metadata_check() -> None:
     text = workflow_text("ci.yml")
     assert "Verify contracts dependency is exactly pinned and published" in text

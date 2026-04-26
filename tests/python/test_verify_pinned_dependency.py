@@ -43,7 +43,7 @@ def test_load_pinned_dependency_returns_exact_spec(tmp_path: Path) -> None:
 [project]
 dependencies = [
     "azure-identity==1.25.2",
-    "asset-allocation-contracts==1.1.0",
+    "asset-allocation-contracts>=1.1.0,<2.0.0",
 ]
 """.strip()
         + "\n",
@@ -51,8 +51,8 @@ dependencies = [
     )
 
     assert (
-        MODULE.load_pinned_dependency(pyproject_path, "asset-allocation-contracts")
-        == "asset-allocation-contracts==1.1.0"
+        MODULE.load_dependency_spec(pyproject_path, "asset-allocation-contracts")
+        == "asset-allocation-contracts>=1.1.0,<2.0.0"
     )
 
 
@@ -61,6 +61,58 @@ def test_verify_dependency_requirement_uses_pip_download(monkeypatch: pytest.Mon
 
     def fake_run(args: list[str], *, capture_output: bool, text: bool, check: bool) -> subprocess.CompletedProcess[str]:
         captured["args"] = args
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps({"name": "asset-allocation-contracts", "versions": ["1.1.0", "1.0.0"]}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+
+    assert MODULE.list_published_versions("asset-allocation-contracts") == ["1.1.0", "1.0.0"]
+    assert captured["args"][:5] == [sys.executable, "-m", "pip", "index", "versions"]
+    assert "--pre" not in captured["args"]
+    assert "--json" in captured["args"]
+
+
+def test_resolve_compatible_versions_ignores_prereleases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        MODULE,
+        "list_published_versions",
+        lambda package_name: ["1.2.0rc1", "1.1.0", "1.0.5"],
+    )
+
+    assert MODULE.resolve_compatible_versions(
+        "asset-allocation-contracts>=1.0.0,<2.0.0",
+        "asset-allocation-contracts",
+    ) == ["1.0.5", "1.1.0"]
+
+
+def test_verify_dependency_spec_returns_highest_compatible_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_compatible_versions",
+        lambda spec, package_name: ["1.1.0", "1.2.0"],
+    )
+
+    assert (
+        MODULE.verify_dependency_spec(
+            "asset-allocation-contracts>=1.1.0,<2.0.0",
+            "asset-allocation-contracts",
+        )
+        == "1.2.0"
+    )
+
+
+def test_verify_dependency_spec_raises_clear_error_when_no_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MODULE, "resolve_compatible_versions", lambda spec, package_name: [])
+
+    with pytest.raises(RuntimeError, match="has no compatible published stable versions"):
+        MODULE.verify_dependency_spec(
+            "asset-allocation-contracts>=1.1.0,<2.0.0",
+            "asset-allocation-contracts",
+        )
         assert capture_output is True
         assert text is True
         assert check is False

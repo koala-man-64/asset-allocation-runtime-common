@@ -30,12 +30,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Verify contracts dependency is exactly pinned and published
+      - name: Verify contracts dependency spec resolves from published stable versions
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python scripts/verify_pinned_dependency.py --package asset-allocation-contracts
+          python scripts/verify_pinned_dependency.py --package asset-allocation-contracts --mode published
 
       - name: Audit Python dependencies
         shell: bash

@@ -30,14 +30,19 @@ class DependencyRequirement:
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify an exact dependency pin in python/pyproject.toml and optionally in built distributions."
+            "Verify a dependency spec in python/pyproject.toml resolves to at least one published stable version."
         )
     )
     parser.add_argument("--pyproject", default="python/pyproject.toml", help="Path to the pyproject.toml file to inspect.")
     parser.add_argument("--package", required=True, help="Package name to verify, for example asset-allocation-contracts.")
     parser.add_argument(
-        "--distribution-dir",
-        help="Optional directory containing built wheel or sdist files whose metadata should declare the same exact pin.",
+        "--mode",
+        choices=("published",),
+        default="published",
+        help=(
+            "published verifies the dependency spec resolves from the configured index "
+            "to at least one stable published version."
+        ),
     )
     return parser
 
@@ -50,15 +55,14 @@ def parse_stable_semver(version: str) -> tuple[int, int, int] | None:
     return tuple(int(match.group(name)) for name in ("major", "minor", "patch"))
 
 
-def load_pinned_dependency(pyproject_path: Path, package_name: str) -> str:
+def load_dependency_spec(pyproject_path: Path, package_name: str) -> str:
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     dependencies = pyproject.get("project", {}).get("dependencies", [])
-    prefix = f"{package_name}=="
-    matches = [dependency for dependency in dependencies if dependency.startswith(prefix)]
+    matches = [dependency for dependency in dependencies if Requirement(dependency).name == package_name]
 
     if len(matches) != 1:
         raise ValueError(
-            f"Expected exactly one exact-pinned dependency for {package_name} in {pyproject_path}, found {len(matches)}."
+            f"Expected exactly one dependency spec for {package_name} in {pyproject_path}, found {len(matches)}."
         )
 
     return matches[0]
