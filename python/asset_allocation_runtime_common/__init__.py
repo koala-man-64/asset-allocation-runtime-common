@@ -17,6 +17,8 @@ from asset_allocation_runtime_common.job_metadata import (
     resolve_job_metadata,
     validate_job_metadata_tags,
 )
+from asset_allocation_runtime_common.intraday_repository import IntradayRepository
+from asset_allocation_runtime_common.notification_repository import NotificationRepository
 from asset_allocation_runtime_common.strategy_publication_repository import StrategyPublicationRepository
 from asset_allocation_runtime_common.ranking_repository import RankingRepository
 from asset_allocation_runtime_common.regime_repository import RegimeRepository
@@ -33,8 +35,10 @@ __all__ = [
     "ControlPlaneRequestError",
     "ControlPlaneTransport",
     "ControlPlaneTransportConfig",
+    "IntradayRepository",
     "JOB_METADATA_TAGS",
     "JobMetadataResolution",
+    "NotificationRepository",
     "RankingRepository",
     "RegimeRepository",
     "ResultsRepository",

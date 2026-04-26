@@ -65,6 +65,31 @@ class SyncResult:
     lock_wait_ms: int
 
 
+class SymbolAvailabilityError(RuntimeError):
+    """Base error for provider-scoped symbol availability sync failures."""
+
+
+class EmptyProviderSymbolSetError(SymbolAvailabilityError):
+    """Raised when a provider returns no usable symbols for an availability sync."""
+
+    def __init__(
+        self,
+        *,
+        provider: ProviderName | str,
+        source_column: str | None = None,
+        domain: DomainName | str | None = None,
+    ) -> None:
+        parts = [f"provider={provider!r}"]
+        if domain:
+            parts.append(f"domain={domain!r}")
+        if source_column:
+            parts.append(f"source_column={source_column!r}")
+        super().__init__("Provider symbol availability sync returned no symbols; refusing Postgres sync (" + ", ".join(parts) + ").")
+        self.provider = str(provider)
+        self.source_column = source_column
+        self.domain = str(domain) if domain is not None else None
+
+
 def _normalize_symbol(value: object) -> str:
     return str(value or "").strip().upper()
 
@@ -169,7 +194,7 @@ def _fetch_massive_symbols_df() -> pd.DataFrame:
         records = client.get_tickers(market="stocks", locale="us", active=True)
     df = _normalize_massive_records(records)
     if df.empty:
-        raise RuntimeError("Massive ticker sync returned no symbols.")
+        raise EmptyProviderSymbolSetError(provider="massive", source_column="source_massive")
     return df
 
 
@@ -178,7 +203,7 @@ def _fetch_alpha_vantage_symbols_df() -> pd.DataFrame:
         csv_text = client.get_listing_status_csv(state="active")
     df = mdc._parse_alpha_vantage_listing_status_csv(str(csv_text))
     if df.empty:
-        raise RuntimeError("Alpha Vantage listing-status sync returned no symbols.")
+        raise EmptyProviderSymbolSetError(provider="alpha_vantage", source_column="source_alpha_vantage")
     df["source_alpha_vantage"] = True
     return df
 
@@ -190,13 +215,13 @@ def _fetch_price_target_symbols_df() -> pd.DataFrame:
     nasdaqdatalink.ApiConfig.api_key = api_key
     df = nasdaqdatalink.get_table("ZACKS/TP", paginate=True, qopts={"columns": ["ticker"]})
     if df is None or df.empty or "ticker" not in df.columns:
-        raise RuntimeError("Nasdaq price-target symbol sync returned no symbols.")
+        raise EmptyProviderSymbolSetError(provider="nasdaq", source_column="source_nasdaq")
     out = pd.DataFrame({"Symbol": df["ticker"].astype(str).str.strip().str.upper()})
     out = out[out["Symbol"].ne("")]
     out = out.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
     out["source_nasdaq"] = True
     if out.empty:
-        raise RuntimeError("Nasdaq price-target symbol sync returned no symbols.")
+        raise EmptyProviderSymbolSetError(provider="nasdaq", source_column="source_nasdaq")
     return out
 
 
@@ -235,7 +260,7 @@ def _apply_availability_sync(cur, *, df_symbols: pd.DataFrame, source_column: st
     ]
     symbols = list(dict.fromkeys(symbols))
     if not symbols:
-        raise RuntimeError(f"Refusing to sync empty availability set for {source_column}.")
+        raise EmptyProviderSymbolSetError(provider=source_column, source_column=source_column)
 
     cur.execute("CREATE TEMP TABLE tmp_symbol_availability (symbol TEXT PRIMARY KEY) ON COMMIT DROP;")
     cur.executemany(
@@ -312,6 +337,8 @@ def sync_domain_availability(domain: DomainName) -> SyncResult:
     df_symbols = _fetch_provider_symbols_df(provider)
     df_symbols = df_symbols.copy()
     listed_count = int(len(df_symbols))
+    if listed_count <= 0:
+        raise EmptyProviderSymbolSetError(provider=provider, source_column=source_column, domain=domain)
 
     lock_key = _ADVISORY_LOCK_KEYS[source_column]
     with connect(dsn) as conn:

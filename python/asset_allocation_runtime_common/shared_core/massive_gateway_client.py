@@ -4,14 +4,22 @@ import collections
 import json
 import logging
 import os
+import random
 import threading
 import time
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
 import httpx
 
 from asset_allocation_runtime_common.api_gateway_auth import build_access_token_provider
+from asset_allocation_runtime_common.shared_core.redaction import (
+    redact_exception_cause,
+    redact_secrets,
+    redact_text,
+)
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 60.0
@@ -23,8 +31,12 @@ _DEFAULT_API_WARMUP_PROBE_TIMEOUT_SECONDS = 5.0
 _DEFAULT_API_READINESS_ENABLED = True
 _DEFAULT_API_READINESS_MAX_ATTEMPTS = 6
 _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
+_DEFAULT_REQUEST_RETRY_ATTEMPTS = 3
+_DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS = 1.0
+_DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS = 8.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+_RETRYABLE_REQUEST_STATUS_CODES = {408, 425, 500, 502, 503, 504}
 try:
     _GATEWAY_TRACE_ERROR_LIMIT = max(1, int(str(os.environ.get("MASSIVE_GATEWAY_TRACE_ERROR_LIMIT") or "200").strip()))
 except Exception:
@@ -44,10 +56,10 @@ class MassiveGatewayError(RuntimeError):
         detail: Optional[str] = None,
         payload: Optional[dict[str, Any]] = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(redact_text(message))
         self.status_code = status_code
-        self.detail = detail
-        self.payload = payload
+        self.detail = redact_text(detail) if detail is not None else None
+        self.payload = redact_secrets(payload) if payload is not None else None
 
 
 class MassiveGatewayAuthError(MassiveGatewayError):
@@ -106,7 +118,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _truncate_trace_text(value: object, *, limit: int = 240) -> str:
-    text = str(value or "").strip()
+    text = redact_text(value).strip()
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 3)] + "..."
@@ -119,7 +131,7 @@ def _emit_bounded_gateway_warning(category: str, message: str) -> None:
             return
         current = seen + 1
         _GATEWAY_TRACE_COUNTS[category] = current
-    logger.warning("[massive-gateway:%s#%s] %s", category, current, message)
+    logger.warning("[massive-gateway:%s#%s] %s", redact_text(category), current, redact_text(message))
     if current == _GATEWAY_TRACE_ERROR_LIMIT:
         logger.info(
             "[massive-gateway:%s] further logs suppressed after %s entries.",
@@ -154,6 +166,9 @@ class MassiveGatewayClientConfig:
     readiness_enabled: bool = _DEFAULT_API_READINESS_ENABLED
     readiness_max_attempts: int = _DEFAULT_API_READINESS_MAX_ATTEMPTS
     readiness_sleep_seconds: float = _DEFAULT_API_READINESS_SLEEP_SECONDS
+    request_retry_attempts: int = _DEFAULT_REQUEST_RETRY_ATTEMPTS
+    request_retry_base_delay_seconds: float = _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS
+    request_retry_max_delay_seconds: float = _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS
 
 
 class MassiveGatewayClient:
@@ -223,6 +238,18 @@ class MassiveGatewayClient:
             0.0,
             _env_float("ASSET_ALLOCATION_API_READINESS_SLEEP_SECONDS", _DEFAULT_API_READINESS_SLEEP_SECONDS),
         )
+        request_retry_attempts = max(
+            1,
+            _env_int("MASSIVE_GATEWAY_RETRY_ATTEMPTS", _DEFAULT_REQUEST_RETRY_ATTEMPTS),
+        )
+        request_retry_base_delay_seconds = max(
+            0.0,
+            _env_float("MASSIVE_GATEWAY_RETRY_BASE_SECONDS", _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS),
+        )
+        request_retry_max_delay_seconds = max(
+            request_retry_base_delay_seconds,
+            _env_float("MASSIVE_GATEWAY_RETRY_MAX_SECONDS", _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS),
+        )
 
         return MassiveGatewayClient(
             MassiveGatewayClientConfig(
@@ -237,6 +264,9 @@ class MassiveGatewayClient:
                 readiness_enabled=True,
                 readiness_max_attempts=readiness_max_attempts,
                 readiness_sleep_seconds=readiness_sleep_seconds,
+                request_retry_attempts=request_retry_attempts,
+                request_retry_base_delay_seconds=request_retry_base_delay_seconds,
+                request_retry_max_delay_seconds=request_retry_max_delay_seconds,
             )
         )
 
@@ -263,7 +293,7 @@ class MassiveGatewayClient:
         except Exception as exc:
             raise MassiveGatewayAuthError(
                 "Failed to acquire bearer token for the Asset Allocation API gateway."
-            ) from exc
+            ) from redact_exception_cause(exc)
 
         caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME"))
         caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME"))
@@ -278,15 +308,15 @@ class MassiveGatewayClient:
             payload = response.json()
         except Exception:
             text = (response.text or "").strip()
-            return text or response.reason_phrase
+            return redact_text(text or response.reason_phrase)
         if isinstance(payload, dict):
             detail = payload.get("detail")
             if isinstance(detail, str) and detail.strip():
-                return detail.strip()
-            return json.dumps(payload, ensure_ascii=False)
+                return redact_text(detail.strip())
+            return redact_text(json.dumps(redact_secrets(payload), ensure_ascii=False))
         if isinstance(payload, str) and payload.strip():
-            return payload.strip()
-        return response.reason_phrase
+            return redact_text(payload.strip())
+        return redact_text(response.reason_phrase)
 
     def _warmup_probe_url(self) -> str:
         return f"{self.config.base_url}{_API_WARMUP_PROBE_PATH}"
@@ -438,73 +468,185 @@ class MassiveGatewayClient:
             self._readiness_succeeded = ready
             return ready
 
-    def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
-        if not self._ensure_gateway_ready():
-            raise MassiveGatewayUnavailableError(
-                "API gateway readiness check failed.",
-                status_code=503,
-                detail="Gateway health probe did not become ready.",
-                payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
-            )
-        url = f"{self.config.base_url}{path}"
+    def _retry_request_delay(self, delay_seconds: float) -> float:
+        current = max(0.0, float(delay_seconds))
+        if current <= 0.0:
+            return 0.0
+        return min(float(self.config.request_retry_max_delay_seconds), max(current * 2.0, 1.0))
+
+    def _retry_after_delay_seconds(self, response: httpx.Response) -> Optional[float]:
+        raw = _strip_or_none(response.headers.get("Retry-After"))
+        if raw is None:
+            return None
         try:
-            resp = self._http.get(url, params=params or {}, headers=self._build_headers())
-        except httpx.TimeoutException as exc:
-            raise MassiveGatewayError(f"API gateway timeout calling {path}", payload={"path": path}) from exc
-        except Exception as exc:
+            return max(0.0, float(raw))
+        except Exception:
+            pass
+        try:
+            parsed = parsedate_to_datetime(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, parsed.timestamp() - time.time())
+        except Exception:
+            return None
+
+    def _retry_sleep_seconds(self, delay_seconds: float, *, response: Optional[httpx.Response] = None) -> float:
+        max_delay = max(0.0, float(self.config.request_retry_max_delay_seconds))
+        retry_after = self._retry_after_delay_seconds(response) if response is not None else None
+        if retry_after is not None:
+            return min(max_delay, retry_after)
+
+        current = min(max_delay, max(0.0, float(delay_seconds)))
+        if current <= 0.0:
+            return 0.0
+        jitter = random.uniform(0.0, min(current * 0.25, max_delay))
+        return min(max_delay, current + jitter)
+
+    def _reset_gateway_state(self) -> None:
+        with self._warmup_lock:
+            self._warmup_attempted = False
+            self._warmup_succeeded = not self.config.warmup_enabled
+        with self._readiness_lock:
+            self._readiness_attempted = False
+            self._readiness_succeeded = not self.config.readiness_enabled
+
+    def _is_disabled_detail(self, detail: str) -> bool:
+        lowered = detail.lower()
+        return "disabled" in lowered and ("provider" in lowered or "massive" in lowered or "gateway" in lowered)
+
+    def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
+        url = f"{self.config.base_url}{path}"
+        attempts = max(1, int(self.config.request_retry_attempts))
+        delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
+
+        for attempt in range(1, attempts + 1):
+            if not self._ensure_gateway_ready():
+                raise MassiveGatewayUnavailableError(
+                    "API gateway readiness check failed.",
+                    status_code=503,
+                    detail="Gateway health probe did not become ready.",
+                    payload={"path": path, "probe_path": _API_WARMUP_PROBE_PATH},
+                )
+            try:
+                resp = self._http.get(url, params=params or {}, headers=self._build_headers())
+            except httpx.TimeoutException as exc:
+                if attempt < attempts:
+                    sleep_seconds = self._retry_sleep_seconds(delay_seconds)
+                    logger.warning(
+                        "Massive gateway request timed out (path=%s, attempt=%s/%s, sleep=%.1fs).",
+                        path,
+                        attempt,
+                        attempts,
+                        sleep_seconds,
+                    )
+                    if sleep_seconds > 0.0:
+                        time.sleep(sleep_seconds)
+                    delay_seconds = self._retry_request_delay(delay_seconds)
+                    self._reset_gateway_state()
+                    continue
+                raise MassiveGatewayUnavailableError(
+                    f"API gateway timeout calling {path}",
+                    status_code=504,
+                    detail="Gateway request timed out.",
+                    payload={"path": path},
+                ) from redact_exception_cause(exc)
+            except httpx.TransportError as exc:
+                if attempt < attempts:
+                    sleep_seconds = self._retry_sleep_seconds(delay_seconds)
+                    logger.warning(
+                        "Massive gateway transport error retrying (path=%s, attempt=%s/%s, sleep=%.1fs, error=%s).",
+                        path,
+                        attempt,
+                        attempts,
+                        sleep_seconds,
+                        redact_text(exc),
+                    )
+                    if sleep_seconds > 0.0:
+                        time.sleep(sleep_seconds)
+                    delay_seconds = self._retry_request_delay(delay_seconds)
+                    self._reset_gateway_state()
+                    continue
+                raise MassiveGatewayUnavailableError(
+                    f"API gateway transport failure calling {path}: {type(exc).__name__}: {exc}",
+                    payload={"path": path},
+                ) from redact_exception_cause(exc)
+            except Exception as exc:
+                raise MassiveGatewayError(
+                    f"API gateway call failed: {type(exc).__name__}: {exc}",
+                    payload={"path": path},
+                ) from redact_exception_cause(exc)
+
+            if resp.status_code < 400:
+                return resp
+
+            detail = self._extract_detail(resp)
+            payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
+            if (
+                resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES
+                and not self._is_disabled_detail(detail)
+                and attempt < attempts
+            ):
+                sleep_seconds = self._retry_sleep_seconds(delay_seconds, response=resp)
+                logger.warning(
+                    "Massive gateway request retrying after status=%s (path=%s, attempt=%s/%s, sleep=%.1fs, detail=%s).",
+                    resp.status_code,
+                    path,
+                    attempt,
+                    attempts,
+                    sleep_seconds,
+                    detail[:220],
+                )
+                if sleep_seconds > 0.0:
+                    time.sleep(sleep_seconds)
+                delay_seconds = self._retry_request_delay(delay_seconds)
+                self._reset_gateway_state()
+                continue
+
+            caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME")) or "unknown"
+            caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME")) or "n/a"
+            _emit_bounded_gateway_warning(
+                f"{path}:{resp.status_code}",
+                f"API gateway request failed caller_job={caller_job} caller_execution={caller_execution} "
+                f"path={path} status={resp.status_code} params={_truncate_trace_text(json.dumps(params or {}, sort_keys=True))} "
+                f"detail={_truncate_trace_text(detail)}",
+            )
+
+            if resp.status_code in {401, 403}:
+                raise MassiveGatewayAuthError(
+                    "API gateway auth failed.",
+                    status_code=resp.status_code,
+                    detail=detail,
+                    payload=payload,
+                )
+            if resp.status_code == 404:
+                raise MassiveGatewayNotFoundError(
+                    detail or "Not found.",
+                    status_code=resp.status_code,
+                    detail=detail,
+                    payload=payload,
+                )
+            if resp.status_code == 429:
+                raise MassiveGatewayRateLimitError(
+                    detail or "Rate limited.",
+                    status_code=resp.status_code,
+                    detail=detail,
+                    payload=payload,
+                )
+            if resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES or self._is_disabled_detail(detail):
+                raise MassiveGatewayUnavailableError(
+                    detail or "Gateway unavailable.",
+                    status_code=resp.status_code,
+                    detail=detail,
+                    payload=payload,
+                )
             raise MassiveGatewayError(
-                f"API gateway call failed: {type(exc).__name__}: {exc}",
-                payload={"path": path},
-            ) from exc
+                f"API gateway error (status={resp.status_code}).",
+                status_code=resp.status_code,
+                detail=detail,
+                payload=payload,
+            )
 
-        if resp.status_code < 400:
-            return resp
-
-        detail = self._extract_detail(resp)
-        payload = {"path": path, "status_code": int(resp.status_code), "detail": detail}
-        caller_job = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_NAME")) or "unknown"
-        caller_execution = _strip_or_none(os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME")) or "n/a"
-        _emit_bounded_gateway_warning(
-            f"{path}:{resp.status_code}",
-            f"API gateway request failed caller_job={caller_job} caller_execution={caller_execution} "
-            f"path={path} status={resp.status_code} params={_truncate_trace_text(json.dumps(params or {}, sort_keys=True))} "
-            f"detail={_truncate_trace_text(detail)}",
-        )
-
-        if resp.status_code in {401, 403}:
-            raise MassiveGatewayAuthError(
-                "API gateway auth failed.",
-                status_code=resp.status_code,
-                detail=detail,
-                payload=payload,
-            )
-        if resp.status_code == 404:
-            raise MassiveGatewayNotFoundError(
-                detail or "Not found.",
-                status_code=resp.status_code,
-                detail=detail,
-                payload=payload,
-            )
-        if resp.status_code == 429:
-            raise MassiveGatewayRateLimitError(
-                detail or "Rate limited.",
-                status_code=resp.status_code,
-                detail=detail,
-                payload=payload,
-            )
-        if resp.status_code == 503:
-            raise MassiveGatewayUnavailableError(
-                detail or "Gateway unavailable.",
-                status_code=resp.status_code,
-                detail=detail,
-                payload=payload,
-            )
-        raise MassiveGatewayError(
-            f"API gateway error (status={resp.status_code}).",
-            status_code=resp.status_code,
-            detail=detail,
-            payload=payload,
-        )
+        raise MassiveGatewayUnavailableError(f"API gateway retry budget exhausted calling {path}", payload={"path": path})
 
     def get_daily_time_series_csv(
         self,
