@@ -9,8 +9,20 @@ from asset_allocation_runtime_common.control_plane_transport import (
     ControlPlaneTransport,
     ControlPlaneTransportConfig,
 )
+from asset_allocation_runtime_common.job_metadata import (
+    JOB_METADATA_TAGS,
+    JobMetadataResolution,
+    catalog_job_names,
+    expected_job_metadata,
+    resolve_job_metadata,
+    validate_job_metadata_tags,
+)
+from asset_allocation_runtime_common.intraday_repository import IntradayRepository
+from asset_allocation_runtime_common.notification_repository import NotificationRepository
+from asset_allocation_runtime_common.strategy_publication_repository import StrategyPublicationRepository
 from asset_allocation_runtime_common.ranking_repository import RankingRepository
 from asset_allocation_runtime_common.regime_repository import RegimeRepository
+from asset_allocation_runtime_common.results_repository import ResultsRepository
 from asset_allocation_runtime_common.strategy_repository import (
     StrategyRepository,
     normalize_strategy_config_document,
@@ -23,11 +35,30 @@ __all__ = [
     "ControlPlaneRequestError",
     "ControlPlaneTransport",
     "ControlPlaneTransportConfig",
+    "IntradayRepository",
+    "JOB_METADATA_TAGS",
+    "JobMetadataResolution",
+    "NotificationRepository",
     "RankingRepository",
     "RegimeRepository",
+    "ResultsRepository",
     "StrategyRepository",
+    "StrategyPublicationRepository",
+    "SymbolEnrichmentRepository",
     "UniverseRepository",
     "build_access_token_provider",
+    "catalog_job_names",
+    "expected_job_metadata",
     "normalize_strategy_config_document",
     "persist_backtest_results",
+    "resolve_job_metadata",
+    "validate_job_metadata_tags",
 ]
+
+
+def __getattr__(name: str):
+    if name == "SymbolEnrichmentRepository":
+        from asset_allocation_runtime_common.symbol_enrichment_repository import SymbolEnrichmentRepository
+
+        return SymbolEnrichmentRepository
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

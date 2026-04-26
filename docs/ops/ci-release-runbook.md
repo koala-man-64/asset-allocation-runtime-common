@@ -5,27 +5,22 @@
 - `ci.yml` is the required gate for PRs and `main`.
 - CI must install the package from the repo itself and run tests without any sibling checkout.
 - CI also verifies the package can build a wheel and sdist.
-- CI hard-fails when `python/pyproject.toml` pins `asset-allocation-contracts` to anything other than the latest stable published version.
+- CI verifies that `python/pyproject.toml` pins `asset-allocation-contracts` exactly, that the pinned version resolves from the configured package index, and that the built wheel and sdist metadata declare the same exact pin.
 
-### Contracts pin refresh
-
-- `refresh-contracts-pin.yml` runs on weekdays and manual dispatch.
-- It rewrites `asset-allocation-contracts` in `python/pyproject.toml` to the latest stable published version, pushes a long-lived refresh branch, and opens or updates a PR.
-- The workflow runs install, `pip check`, `ruff`, and `pytest` against the refreshed pin. It still updates the PR branch even if validation fails, then fails the workflow so the break is visible and must be fixed forward.
-- `security.yml` enforces the same latest-stable contracts pin rule as `ci.yml` before running `pip-audit`.
+- `security.yml` also verifies that the declared exact contracts pin in `python/pyproject.toml` resolves before running `pip-audit`.
 
 ## Release
 
 - `release.yml` is a manually dispatched workflow that releases from `main`.
 - It reuses an already-prepared release version when possible; otherwise it bumps the requested semver segment, updates the tracked release files, commits the bump, creates the release tag, publishes the Python package, and writes `artifacts/release-manifest.json`.
-- The release workflow dispatches `runtime_common_released` to control-plane and jobs.
-- Consumer repos should validate the new version through their compatibility workflows before production rollout.
+- The release workflow dispatches `runtime_common_released` to jobs.
+- Consumer repos should validate any repinned runtime-common version through their normal CI and release checks before production rollout.
 
 ### GitHub configuration bootstrap
 
-The release workflow and contracts-pin refresh workflow require these repository-scoped GitHub settings:
+The release workflow requires these repository-scoped GitHub settings:
 
-- Variables: `CONTROL_PLANE_REPOSITORY`, `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
+- Variables: `JOBS_REPOSITORY`, `DISPATCH_APP_ID`, `PYTHON_PUBLISH_REPOSITORY_URL`
 - Secrets: `DISPATCH_APP_PRIVATE_KEY`, `PYTHON_PUBLISH_USERNAME`, `PYTHON_PUBLISH_PASSWORD`
 
 This repo tracks the expected configuration in `docs/ops/env-contract.csv` and `.env.template`.

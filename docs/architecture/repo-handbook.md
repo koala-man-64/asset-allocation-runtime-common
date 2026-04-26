@@ -10,13 +10,14 @@ The other architecture docs in this folder remain authoritative as supporting ev
 
 1. Publish or locally install `asset-allocation-contracts` and `asset-allocation-runtime-common`.
 2. Work inside one runtime repo at a time.
-3. Use compatibility workflows for cross-repo changes instead of sibling source checkouts.
+3. Prefer `asset_allocation_runtime_common.foundation`, `providers`, `market_data`, `backtesting`, and `domain` imports over recreating shared backend modules in consumer repos.
+4. Use compatibility workflows for cross-repo changes instead of sibling source checkouts.
 
 ## Versioning Rules
 
 - `asset-allocation-contracts` and `asset-allocation-runtime-common` are semver artifacts.
-- `asset-allocation-runtime-common` keeps `asset-allocation-contracts` exact-pinned in source, but that pin is expected to match the latest stable published contracts release.
-- A scheduled refresh workflow opens or updates a PR when the contracts pin falls behind, and normal CI fails until the repo catches up.
+- `asset-allocation-runtime-common` currently declares `asset-allocation-contracts==3.7.0` as its exact shared-package dependency, and CI verifies that the pin resolves from the configured package index and propagates into built distribution metadata.
+- Changing the contracts pin is an intentional source change and must line up with a published `asset-allocation-contracts` release.
 - The `Runtime Common Release` workflow owns the tracked `asset-allocation-runtime-common` version bump and release tag creation from `main`; the operator selects the semver increment when dispatching the workflow.
 - Control-plane, jobs, and UI pin exact dependency versions in manifests.
 - Release manifests record at least the current repo version plus shared dependency versions.

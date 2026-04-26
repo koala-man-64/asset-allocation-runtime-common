@@ -272,7 +272,22 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
+          import tomllib
           from pathlib import Path
+
+          contracts_version = None
+          pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))
+          for dependency in pyproject["project"].get("dependencies", []):
+              match = re.fullmatch(r"asset-allocation-contracts==(?P<version>\d+\.\d+\.\d+)", dependency)
+              if match:
+                  contracts_version = match.group("version")
+                  break
+
+          if not contracts_version:
+              raise SystemExit(
+                  "python/pyproject.toml must declare an exact asset-allocation-contracts dependency for release manifests."
+              )
 
           manifest = {
               "repo": os.environ["GITHUB_REPOSITORY"],
@@ -280,6 +295,7 @@ jobs:
               "artifact_kind": "python-package",
               "artifact_ref": sorted(p.name for p in Path("artifacts/python").iterdir()),
               "version_matrix": {
+                  "contracts": contracts_version,
                   "runtime_common": os.environ["RUNTIME_COMMON_VERSION"],
               },
           }
@@ -302,7 +318,6 @@ jobs:
       - name: Dispatch runtime-common release to consumers
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          CONTROL_PLANE_REPOSITORY: ${{ vars.CONTROL_PLANE_REPOSITORY }}
           JOBS_REPOSITORY: ${{ vars.JOBS_REPOSITORY }}
           RELEASE_GIT_SHA: ${{ steps.release-ref.outputs.release_git_sha }}
           RELEASE_REF_NAME: ${{ steps.release-ref.outputs.release_ref_name }}
@@ -311,12 +326,10 @@ jobs:
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER}"
-          control_plane_repo="${CONTROL_PLANE_REPOSITORY:-${owner}/asset-allocation-control-plane}"
           jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"
-          for repo in "${control_plane_repo}" "${jobs_repo}"; do
-            gh api "repos/${repo}/dispatches" \
-              --method POST \
-              --input - <<EOF
+          gh api "repos/${jobs_repo}/dispatches" \
+            --method POST \
+            --input - <<EOF
           {
             "event_type": "runtime_common_released",
             "client_payload": {
@@ -327,7 +340,6 @@ jobs:
             }
           }
           EOF
-          done
 
       - name: Write release summary
         env:
@@ -343,5 +355,5 @@ jobs:
             echo "- Version: \`${RUNTIME_COMMON_VERSION}\`"
             echo "- Ref: \`${RELEASE_REF_NAME}\`"
             echo "- Manifest: \`artifacts/release-manifest.json\`"
-            echo "- Downstream dispatch: \`runtime_common_released\` to control-plane and jobs"
+            echo "- Downstream dispatch: \`runtime_common_released\` to jobs"
           } >> "${GITHUB_STEP_SUMMARY}"

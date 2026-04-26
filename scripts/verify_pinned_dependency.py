@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 import tomllib
+import zipfile
+from dataclasses import dataclass
+from email import message_from_string
 from pathlib import Path
-import re
-
-from packaging.requirements import Requirement
-from packaging.version import Version
+from pathlib import PurePosixPath
 
 
 STABLE_SEMVER_PATTERN = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+
+
+@dataclass(frozen=True)
+class DependencyRequirement:
+    package_name: str
+    pinned_version: str
+
+    @property
+    def spec(self) -> str:
+        return f"{self.package_name}=={self.pinned_version}"
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -56,6 +68,20 @@ def load_dependency_spec(pyproject_path: Path, package_name: str) -> str:
     return matches[0]
 
 
+def parse_dependency_requirement(spec: str, package_name: str) -> DependencyRequirement:
+    prefix = f"{package_name}=="
+    if not spec.startswith(prefix):
+        raise ValueError(f"Expected == requirement for {package_name}, found '{spec}'.")
+
+    version = spec.removeprefix(prefix)
+    if parse_stable_semver(version) is None:
+        raise ValueError(
+            f"Expected {package_name} to use a stable semver pin, found '{version}'."
+        )
+
+    return DependencyRequirement(package_name=package_name, pinned_version=version)
+
+
 def run_pip_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         arguments,
@@ -65,68 +91,91 @@ def run_pip_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def list_published_versions(package_name: str) -> list[str]:
-    result = run_pip_command(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "index",
-            "versions",
-            package_name,
-            "--json",
-            "--disable-pip-version-check",
-        ]
+def verify_dependency_requirement(spec: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="runtime-common-dependency-check-") as download_dir:
+        result = run_pip_command(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "download",
+                "--dest",
+                download_dir,
+                "--disable-pip-version-check",
+                "--no-deps",
+                spec,
+            ]
+        )
+
+    if result.returncode == 0:
+        print(f"Verified published dependency requirement: {spec}")
+        return
+
+    output = result.stderr.strip() or result.stdout.strip() or "pip download failed without output."
+    raise RuntimeError(
+        "Dependency requirement could not be resolved from the configured package index: "
+        f"{spec}. Publish the pinned shared package first or update python/pyproject.toml to the exact published version.\n"
+        f"pip output:\n{output}"
     )
 
-    if result.returncode != 0:
-        output = result.stderr.strip() or result.stdout.strip() or "pip index failed without output."
+
+def read_distribution_metadata(distribution_path: Path) -> str:
+    if distribution_path.suffix == ".whl":
+        with zipfile.ZipFile(distribution_path) as archive:
+            metadata_names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+            if len(metadata_names) != 1:
+                raise ValueError(
+                    f"Expected exactly one wheel metadata file in {distribution_path}, found {len(metadata_names)}."
+                )
+            return archive.read(metadata_names[0]).decode("utf-8")
+
+    if distribution_path.suffixes[-2:] == [".tar", ".gz"]:
+        with tarfile.open(distribution_path, "r:gz") as archive:
+            members = [
+                member
+                for member in archive.getmembers()
+                if member.isfile()
+                and PurePosixPath(member.name).name == "PKG-INFO"
+                and ".egg-info/" not in member.name
+            ]
+            if len(members) != 1:
+                raise ValueError(
+                    f"Expected exactly one sdist PKG-INFO file in {distribution_path}, found {len(members)}."
+                )
+            handle = archive.extractfile(members[0])
+            if handle is None:
+                raise ValueError(f"Could not extract PKG-INFO from {distribution_path}.")
+            return handle.read().decode("utf-8")
+
+    raise ValueError(f"Unsupported distribution format for metadata inspection: {distribution_path.name}")
+
+
+def verify_distribution_requirement(distribution_path: Path, spec: str) -> None:
+    metadata = message_from_string(read_distribution_metadata(distribution_path))
+    requirements = [value.strip() for value in metadata.get_all("Requires-Dist", [])]
+    if spec not in requirements:
+        declared = ", ".join(requirements) if requirements else "(none)"
         raise RuntimeError(
-            "Could not resolve published versions from the configured package index: "
-            f"{package_name}.\npip output:\n{output}"
+            "Built distribution metadata does not declare the expected pinned dependency: "
+            f"{distribution_path} expected {spec}; declared requirements: {declared}."
         )
 
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Configured package index returned invalid version metadata for {package_name}: {exc}"
-        ) from exc
 
-    versions = payload.get("versions")
-    if not isinstance(versions, list):
-        raise RuntimeError(
-            f"Configured package index did not return a versions list for {package_name}."
-        )
+def verify_built_distributions(distribution_dir: Path, spec: str) -> None:
+    if not distribution_dir.is_dir():
+        raise ValueError(f"Distribution directory does not exist: {distribution_dir}")
 
-    return [str(version) for version in versions]
+    distributions = sorted(
+        path
+        for path in distribution_dir.iterdir()
+        if path.is_file() and (path.suffix == ".whl" or path.suffixes[-2:] == [".tar", ".gz"])
+    )
+    if not distributions:
+        raise ValueError(f"No wheel or sdist files found in {distribution_dir}.")
 
-
-def resolve_compatible_versions(spec: str, package_name: str) -> list[str]:
-    requirement = Requirement(spec)
-    if requirement.name != package_name:
-        raise ValueError(f"Expected requirement for {package_name}, found '{spec}'.")
-
-    compatible_versions = [
-        version
-        for version in list_published_versions(package_name)
-        if parse_stable_semver(version) is not None and requirement.specifier.contains(Version(version), prereleases=False)
-    ]
-    compatible_versions.sort(key=lambda version: parse_stable_semver(version) or (-1, -1, -1))
-    return compatible_versions
-
-
-def verify_dependency_spec(spec: str, package_name: str) -> str:
-    compatible_versions = resolve_compatible_versions(spec, package_name)
-    if not compatible_versions:
-        raise RuntimeError(
-            "Dependency spec has no compatible published stable versions on the configured package index: "
-            f"{spec}. Publish a compatible shared package version or widen the supported range.\n"
-        )
-
-    resolved = compatible_versions[-1]
-    print(f"Verified published compatible dependency spec: {spec} -> {package_name}=={resolved}")
-    return resolved
+    for distribution_path in distributions:
+        verify_distribution_requirement(distribution_path, spec)
+        print(f"Verified built distribution metadata: {distribution_path.name} -> {spec}")
 
 
 def main() -> int:
@@ -134,8 +183,11 @@ def main() -> int:
     pyproject_path = Path(args.pyproject).resolve()
 
     try:
-        spec = load_dependency_spec(pyproject_path, args.package)
-        verify_dependency_spec(spec, args.package)
+        spec = load_pinned_dependency(pyproject_path, args.package)
+        requirement = parse_dependency_requirement(spec, args.package)
+        verify_dependency_requirement(requirement.spec)
+        if args.distribution_dir:
+            verify_built_distributions(Path(args.distribution_dir).resolve(), requirement.spec)
     except (OSError, ValueError, RuntimeError, tomllib.TOMLDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

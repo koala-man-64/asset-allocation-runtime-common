@@ -12,6 +12,8 @@ from asset_allocation_runtime_common.api_gateway_auth import build_access_token_
 
 logger = logging.getLogger(__name__)
 
+_ERROR_DETAIL_LIMIT = 500
+
 
 class ControlPlaneRequestError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None, detail: str | None = None) -> None:
@@ -125,6 +127,17 @@ class ControlPlaneTransport:
             return None
         return response.json()
 
+    def probe(self, path: str) -> None:
+        try:
+            self.request_json("GET", path)
+        except ControlPlaneRequestError:
+            raise
+        except Exception as exc:
+            raise ControlPlaneRequestError(
+                f"GET {path} probe failed: {exc}",
+                detail=str(exc),
+            ) from exc
+
     def _extract_detail(self, response: httpx.Response) -> str:
         try:
             payload = response.json()
@@ -134,9 +147,8 @@ class ControlPlaneTransport:
         if isinstance(payload, dict):
             detail = payload.get("detail")
             if isinstance(detail, str) and detail.strip():
-                return detail.strip()
-            return json.dumps(payload, sort_keys=True)
+                return detail.strip()[:_ERROR_DETAIL_LIMIT]
+            return json.dumps(payload, sort_keys=True)[:_ERROR_DETAIL_LIMIT]
         if isinstance(payload, str):
-            return payload.strip()
+            return payload.strip()[:_ERROR_DETAIL_LIMIT]
         return response.reason_phrase
-

@@ -33,23 +33,33 @@ def test_release_workflow_emits_runtime_common_dispatch_event() -> None:
     assert '"event_type": "runtime_common_released"' in text
 
 
-def test_release_workflow_fans_out_only_to_real_consumers() -> None:
+def test_release_workflow_dispatches_only_to_real_consumers() -> None:
     text = release_workflow_text()
-    assert 'control_plane_repo="${CONTROL_PLANE_REPOSITORY:-${owner}/asset-allocation-control-plane}"' in text
     assert 'jobs_repo="${JOBS_REPOSITORY:-${owner}/asset-allocation-jobs}"' in text
-    assert 'for repo in "${control_plane_repo}" "${jobs_repo}"; do' in text
+    assert "CONTROL_" "PLANE_REPOSITORY" not in text
+    assert 'gh api "repos/${jobs_repo}/dispatches" \\' in text
     assert "UI_REPOSITORY" not in text
     assert "asset-allocation-ui" not in text
 
 
 def test_release_summary_matches_runtime_common_consumer_set() -> None:
     text = release_workflow_text()
-    assert 'echo "- Downstream dispatch: \\`runtime_common_released\\` to control-plane and jobs"' in text
+    assert 'echo "- Downstream dispatch: \\`runtime_common_released\\` to jobs"' in text
+
+
+def test_release_manifest_records_runtime_common_and_contracts_versions() -> None:
+    text = release_workflow_text()
+    assert 'pyproject = tomllib.loads(Path("python/pyproject.toml").read_text(encoding="utf-8"))' in text
+    assert "asset-allocation-contracts" in text
+    assert '"contracts": contracts_version,' in text
+    assert '"runtime_common": os.environ["RUNTIME_COMMON_VERSION"],' in text
+    assert "must declare an exact asset-allocation-contracts dependency for release manifests." in text
 
 
 def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
     keys = env_template_keys()
-    assert {"CONTROL_PLANE_REPOSITORY", "JOBS_REPOSITORY"} <= keys
+    assert "CONTROL_" "PLANE_REPOSITORY" not in keys
+    assert "JOBS_REPOSITORY" in keys
     assert "UI_REPOSITORY" not in keys
 
     dispatch_rows = {
@@ -57,5 +67,4 @@ def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
         for row in env_contract_rows()
         if "runtime_common_released dispatch" in row["notes"]
     }
-    assert set(dispatch_rows) == {"CONTROL_PLANE_REPOSITORY", "JOBS_REPOSITORY"}
-
+    assert set(dispatch_rows) == {"JOBS_REPOSITORY"}

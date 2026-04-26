@@ -2,13 +2,17 @@
 
 Shared backend package for the split Asset Allocation system.
 
-This repository owns transport-neutral runtime helpers that both Python runtimes consume:
+This repository owns the shared backend foundations that both Python runtimes consume:
+- storage and runtime foundation modules
+- provider gateway adapters and shared provider helpers
+- market-data and domain helper modules
+- extracted backtesting engine helpers
 - managed-identity bearer token acquisition
 - control-plane HTTP transport
-- control-plane client repositories for read-only runtime state
-- pure config normalization helpers used by those clients
+- control-plane client repositories for shared runtime state
+- pure transforms and normalization helpers used by those flows
 
-It does not own Postgres repositories, provider adapters, monitoring collectors, deploy manifests, or job orchestration.
+It does not own control-plane authority, API routes, monitoring ownership, deploy manifests, or jobs scheduling entrypoints.
 
 ## Quickstart
 
@@ -19,7 +23,7 @@ python -m pytest .\tests\python -q
 
 ## Operations
 
-- `release.yml` dispatches `runtime_common_released` only to `asset-allocation-control-plane` and `asset-allocation-jobs`.
+- `release.yml` dispatches `runtime_common_released` only to `asset-allocation-jobs`.
 - `asset-allocation-ui` is intentionally excluded because it consumes published contracts, not `asset-allocation-runtime-common`.
 
 ## Docs
