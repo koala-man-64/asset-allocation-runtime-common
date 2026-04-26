@@ -128,6 +128,12 @@ _MARKET_COLUMNS: tuple[str, ...] = (
     "below_donchian_low_55d",
     "crosses_above_donchian_high_55d",
     "crosses_below_donchian_low_55d",
+    "dist_prev_week_high_atr",
+    "dist_prev_week_low_atr",
+    "dist_prev_month_high_atr",
+    "dist_prev_month_low_atr",
+    "position_in_20d_range",
+    "position_in_55d_range",
     "sr_support_1_mid",
     "sr_support_1_low",
     "sr_support_1_high",
@@ -156,6 +162,21 @@ _MARKET_COLUMNS: tuple[str, ...] = (
     "fib_nearest_level",
     "fib_nearest_dist_atr",
     "fib_in_value_zone",
+    "swept_sr_resistance_1",
+    "swept_sr_support_1",
+    "bearish_sweep_magnitude_atr",
+    "bullish_sweep_magnitude_atr",
+    "bearish_sweep_reclaim_frac",
+    "bullish_sweep_reclaim_frac",
+    "bars_since_bearish_sweep",
+    "bars_since_bullish_sweep",
+    "bearish_confirm_after_sweep",
+    "bullish_confirm_after_sweep",
+    "amihud_20d",
+    "amihud_z_252d",
+    "dollar_volume_20d",
+    "dollar_volume_z_252d",
+    "liquidity_stress_score",
 )
 _MARKET_INTEGER_COLUMNS = frozenset(
     {
@@ -225,6 +246,12 @@ _MARKET_INTEGER_COLUMNS = frozenset(
         "sr_breaks_below_support_1",
         "fib_swing_direction",
         "fib_in_value_zone",
+        "swept_sr_resistance_1",
+        "swept_sr_support_1",
+        "bars_since_bearish_sweep",
+        "bars_since_bullish_sweep",
+        "bearish_confirm_after_sweep",
+        "bullish_confirm_after_sweep",
     }
 )
 _MARKET_BIGINT_COLUMNS = frozenset({"volume"})
