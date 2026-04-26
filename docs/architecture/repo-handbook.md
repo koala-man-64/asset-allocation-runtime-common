@@ -16,7 +16,7 @@ The other architecture docs in this folder remain authoritative as supporting ev
 ## Versioning Rules
 
 - `asset-allocation-contracts` and `asset-allocation-runtime-common` are semver artifacts.
-- `asset-allocation-runtime-common` currently declares `asset-allocation-contracts==3.3.0` as its exact shared-package dependency, and CI verifies that the pin resolves from the configured package index and propagates into built distribution metadata.
+- `asset-allocation-runtime-common` currently declares `asset-allocation-contracts==3.4.0` as its exact shared-package dependency, and CI verifies that the pin resolves from the configured package index and propagates into built distribution metadata.
 - Changing the contracts pin is an intentional source change and must line up with a published `asset-allocation-contracts` release.
 - The `Runtime Common Release` workflow owns the tracked `asset-allocation-runtime-common` version bump and release tag creation from `main`; the operator selects the semver increment when dispatching the workflow.
 - Control-plane, jobs, and UI pin exact dependency versions in manifests.
