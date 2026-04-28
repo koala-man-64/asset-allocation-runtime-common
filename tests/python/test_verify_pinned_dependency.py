@@ -33,7 +33,7 @@ def test_repo_pyproject_declares_contracts_spec() -> None:
 
     assert (
         MODULE.load_dependency_spec(pyproject_path, "asset-allocation-contracts")
-        == "asset-allocation-contracts==3.10.0"
+        == "asset-allocation-contracts==3.11.0"
     )
 
 
