@@ -262,7 +262,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Contracts Version Pin
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.7.0` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.10.0` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
 
 **Why**
 
@@ -543,7 +543,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.7.0` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.10.0` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
 
 **Why**
 
