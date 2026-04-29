@@ -177,7 +177,11 @@ dependencies = [
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(MODULE, "verify_dependency_spec", lambda spec, package_name: "1.1.0")
+    monkeypatch.setattr(
+        MODULE,
+        "verify_dependency_spec",
+        lambda spec, package_name: pytest.fail("distribution mode should not check published package versions"),
+    )
 
     def fake_verify_built_distributions(path: Path, spec: str) -> None:
         captured["path"] = path
