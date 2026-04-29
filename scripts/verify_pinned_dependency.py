@@ -146,6 +146,7 @@ def list_published_versions(package_name: str) -> list[str]:
             "versions",
             package_name,
             "--json",
+            "--no-cache-dir",
         ]
     )
 
