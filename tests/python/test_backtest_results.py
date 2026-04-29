@@ -209,6 +209,25 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
             }
         ]
     )
+    policy_event_rows = _RowSource(
+        [
+            {
+                "event_seq": 1,
+                "bar_ts": "2026-03-03T14:35:00+00:00",
+                "scope": "strategy",
+                "policy_type": "rebalance",
+                "decision": "applied",
+                "reason_code": "drift_threshold_met",
+                "symbol": "MSFT",
+                "position_id": "pos-1",
+                "policy_id": "rebalance-v1",
+                "observed_value": 12.5,
+                "threshold_value": 10.0,
+                "action": "rebalance",
+                "details": {"target_weight": 0.5},
+            }
+        ]
+    )
 
     backtest_results.persist_backtest_results(
         "postgresql://test",
@@ -251,21 +270,24 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
         closed_position_rows=closed_position_rows,
         selection_trace_rows=selection_rows,
         regime_trace_rows=regime_rows,
+        policy_event_rows=policy_event_rows,
     )
 
-    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 5
+    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 6
     assert timeseries_rows.iterations == 1
     assert rolling_rows.iterations == 1
     assert trade_rows.iterations == 1
     assert closed_position_rows.iterations == 1
     assert selection_rows.iterations == 1
     assert regime_rows.iterations == 1
+    assert policy_event_rows.iterations == 1
     assert len(cursor.copied_tables["core.backtest_timeseries"]) == 2
     assert len(cursor.copied_tables["core.backtest_rolling_metrics"]) == 1
     assert len(cursor.copied_tables["core.backtest_trades"]) == 1
     assert len(cursor.copied_tables["core.backtest_closed_positions"]) == 1
     assert len(cursor.copied_tables["core.backtest_selection_trace"]) == 1
     assert len(cursor.copied_tables["core.backtest_regime_trace"]) == 1
+    assert len(cursor.copied_tables["core.backtest_policy_events"]) == 1
     assert cursor.copied_tables["core.backtest_timeseries"][0][4] == 0.01
     assert cursor.copied_tables["core.backtest_timeseries"][0][5] == 0.01
     assert cursor.copied_tables["core.backtest_timeseries"][1][4] == 0.0095
@@ -278,4 +300,20 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     assert regime_trace_row[7] == "trending_up"
     assert json.loads(regime_trace_row[10]) == ["trending_up", "low_volatility"]
     assert json.loads(regime_trace_row[11])[0]["regime_code"] == "trending_up"
+    policy_event_row = cursor.copied_tables["core.backtest_policy_events"][0]
+    assert policy_event_row[1:7] == [
+        1,
+        "2026-03-03T14:35:00+00:00",
+        "strategy",
+        "rebalance",
+        "applied",
+        "drift_threshold_met",
+    ]
+    assert json.loads(policy_event_row[-1]) == {"target_weight": 0.5}
+    delete_tables = [
+        " ".join(sql.split()).split("DELETE FROM ", 1)[1].split(" WHERE ", 1)[0]
+        for sql, _ in cursor.executed
+        if "DELETE FROM" in sql
+    ]
+    assert delete_tables[0] == "core.backtest_policy_events"
     assert any("UPDATE core.runs" in sql for sql, _ in cursor.executed)

@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterable, Sequence
 from asset_allocation_runtime_common.postgres import connect, copy_rows
 
 
-BACKTEST_RESULTS_SCHEMA_VERSION = 5
+BACKTEST_RESULTS_SCHEMA_VERSION = 6
 
 _SUMMARY_COLUMNS = [
     "run_id",
@@ -128,6 +128,22 @@ _REGIME_TRACE_COLUMNS = [
     "halt_reason",
     "active_regimes_json",
     "signals_json",
+]
+_POLICY_EVENT_COLUMNS = [
+    "run_id",
+    "event_seq",
+    "bar_ts",
+    "scope",
+    "policy_type",
+    "decision",
+    "reason_code",
+    "symbol",
+    "position_id",
+    "policy_id",
+    "observed_value",
+    "threshold_value",
+    "action",
+    "details",
 ]
 
 
@@ -284,8 +300,28 @@ def _build_regime_trace_row(run_id: str, row: dict[str, Any], _index: int) -> li
     ]
 
 
+def _build_policy_event_row(run_id: str, row: dict[str, Any], index: int) -> list[Any]:
+    return [
+        run_id,
+        row.get("event_seq") or index,
+        row.get("bar_ts") or row.get("date"),
+        row.get("scope"),
+        row.get("policy_type"),
+        row.get("decision"),
+        row.get("reason_code"),
+        row.get("symbol"),
+        row.get("position_id"),
+        row.get("policy_id"),
+        row.get("observed_value"),
+        row.get("threshold_value"),
+        row.get("action"),
+        json.dumps(dict(row.get("details") or {}), sort_keys=True),
+    ]
+
+
 def _delete_existing_result_rows(cur: Any, run_id: str) -> None:
     for table_name in (
+        "core.backtest_policy_events",
         "core.backtest_regime_trace",
         "core.backtest_selection_trace",
         "core.backtest_trades",
@@ -341,6 +377,7 @@ def persist_backtest_results(
     closed_position_rows: Iterable[dict[str, Any]] | None = None,
     selection_trace_rows: Iterable[dict[str, Any]] | None = None,
     regime_trace_rows: Iterable[dict[str, Any]] | None = None,
+    policy_event_rows: Iterable[dict[str, Any]] | None = None,
     results_schema_version: int = BACKTEST_RESULTS_SCHEMA_VERSION,
 ) -> None:
     with connect(dsn) as conn:
@@ -432,6 +469,14 @@ def persist_backtest_results(
                 columns=_REGIME_TRACE_COLUMNS,
                 rows=regime_trace_rows,
                 row_builder=lambda row, index: _build_regime_trace_row(run_id, row, index),
+                run_id=run_id,
+            )
+            _copy_dataset(
+                cur,
+                table="core.backtest_policy_events",
+                columns=_POLICY_EVENT_COLUMNS,
+                rows=policy_event_rows,
+                row_builder=lambda row, index: _build_policy_event_row(run_id, row, index),
                 run_id=run_id,
             )
             cur.execute(

@@ -33,7 +33,7 @@ def test_repo_pyproject_declares_contracts_spec() -> None:
 
     assert (
         MODULE.load_dependency_spec(pyproject_path, "asset-allocation-contracts")
-        == "asset-allocation-contracts==3.11.0"
+        == "asset-allocation-contracts==3.12.0"
     )
 
 
@@ -77,6 +77,7 @@ def test_list_published_versions_uses_pip_index_json(monkeypatch: pytest.MonkeyP
     assert MODULE.list_published_versions("asset-allocation-contracts") == ["1.1.0", "1.0.0"]
     assert captured["args"][:5] == [sys.executable, "-m", "pip", "index", "versions"]
     assert "--json" in captured["args"]
+    assert "--no-cache-dir" in captured["args"]
     assert "--pre" not in captured["args"]
 
 
@@ -176,7 +177,11 @@ dependencies = [
     )
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(MODULE, "verify_dependency_spec", lambda spec, package_name: "1.1.0")
+    monkeypatch.setattr(
+        MODULE,
+        "verify_dependency_spec",
+        lambda spec, package_name: pytest.fail("distribution mode should not check published package versions"),
+    )
 
     def fake_verify_built_distributions(path: Path, spec: str) -> None:
         captured["path"] = path

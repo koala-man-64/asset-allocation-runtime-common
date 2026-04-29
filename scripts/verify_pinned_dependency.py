@@ -146,6 +146,7 @@ def list_published_versions(package_name: str) -> list[str]:
             "versions",
             package_name,
             "--json",
+            "--no-cache-dir",
         ]
     )
 
@@ -303,9 +304,10 @@ def main() -> int:
 
     try:
         spec = load_dependency_spec(pyproject_path, args.package)
-        verify_dependency_spec(spec, args.package)
         if args.distribution_dir:
             verify_built_distributions(Path(args.distribution_dir).resolve(), spec)
+        else:
+            verify_dependency_spec(spec, args.package)
     except (OSError, ValueError, RuntimeError, tomllib.TOMLDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
