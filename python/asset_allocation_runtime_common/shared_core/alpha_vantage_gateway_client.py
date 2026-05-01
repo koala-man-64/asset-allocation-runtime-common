@@ -38,6 +38,14 @@ _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 300.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 _RETRYABLE_REQUEST_STATUS_CODES = {502, 503, 504}
+_LISTING_STATUS_CSV_HEADERS = frozenset({"symbol", "name"})
+_THROTTLE_TEXT_MARKERS = (
+    "api call frequency",
+    "call frequency",
+    "rate limit",
+    "too many requests",
+    "thank you for using alpha vantage",
+)
 
 
 class AlphaVantageGatewayError(RuntimeError):
@@ -295,6 +303,73 @@ class AlphaVantageGatewayClient:
             return redact_text(payload.strip())
         return redact_text(response.reason_phrase)
 
+    def _classify_csv_payload_error(
+        self,
+        response: httpx.Response,
+        *,
+        path: str,
+        required_headers: frozenset[str],
+        require_data_row: bool,
+    ) -> Optional[AlphaVantageGatewayError]:
+        raw = str(response.text or "").strip()
+        payload = {"path": path, "status_code": int(response.status_code)}
+        if not raw:
+            return AlphaVantageGatewayUnavailableError(
+                "API gateway returned an empty CSV payload.",
+                status_code=502,
+                detail="Empty CSV payload.",
+                payload=payload,
+            )
+
+        try:
+            decoded = json.loads(raw)
+        except Exception:
+            decoded = None
+        if isinstance(decoded, dict):
+            detail = self._csv_error_detail(raw)
+            return self._classify_provider_payload_text(detail, path=path, payload=payload)
+
+        lines = [line.strip() for line in raw.lstrip("\ufeff").splitlines() if line.strip()]
+        first_line = lines[0] if lines else ""
+        headers = frozenset(column.strip().lower() for column in first_line.split(","))
+        has_required_headers = required_headers.issubset(headers)
+        has_data_row = any(line for line in lines[1:])
+        if has_required_headers and (has_data_row or not require_data_row):
+            return None
+
+        detail = self._csv_error_detail(raw)
+        return self._classify_provider_payload_text(detail, path=path, payload=payload)
+
+    def _csv_error_detail(self, text: str) -> str:
+        compact = " ".join(str(text or "").strip().split())
+        if len(compact) > 500:
+            compact = compact[:500] + "..."
+        return redact_text(compact or "Invalid CSV payload.")
+
+    def _classify_provider_payload_text(
+        self,
+        detail: str,
+        *,
+        path: str,
+        payload: dict[str, Any],
+    ) -> AlphaVantageGatewayError:
+        lowered = detail.lower()
+        payload = {**payload, "detail": detail}
+        if any(marker in lowered for marker in _THROTTLE_TEXT_MARKERS):
+            return AlphaVantageGatewayThrottleError(
+                "API gateway returned an Alpha Vantage throttle payload.",
+                status_code=429,
+                detail=detail,
+                payload=payload,
+            )
+        self._record_circuit_failure(path=path, reason="invalid_csv_payload")
+        return AlphaVantageGatewayUnavailableError(
+            "API gateway returned a non-CSV Alpha Vantage payload.",
+            status_code=502,
+            detail=detail,
+            payload=payload,
+        )
+
     def _warm_up_gateway(self) -> bool:
         if not self.config.warmup_enabled:
             return True
@@ -524,7 +599,14 @@ class AlphaVantageGatewayClient:
                 open_seconds,
             )
 
-    def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> httpx.Response:
+    def _request(
+        self,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        csv_required_headers: Optional[frozenset[str]] = None,
+        csv_require_data_row: bool = False,
+    ) -> httpx.Response:
         url = f"{self.config.base_url}{path}"
         attempts = max(1, int(self.config.request_retry_attempts))
         delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
@@ -569,6 +651,36 @@ class AlphaVantageGatewayClient:
                 ) from redact_exception_cause(exc)
 
             if resp.status_code < 400:
+                if csv_required_headers is not None:
+                    csv_error = self._classify_csv_payload_error(
+                        resp,
+                        path=path,
+                        required_headers=csv_required_headers,
+                        require_data_row=csv_require_data_row,
+                    )
+                    if csv_error is not None:
+                        retryable_csv_error = isinstance(
+                            csv_error,
+                            (AlphaVantageGatewayThrottleError, AlphaVantageGatewayUnavailableError),
+                        )
+                        if retryable_csv_error and attempt < attempts:
+                            sleep_seconds = self._retry_sleep_seconds(delay_seconds, response=resp)
+                            logger.warning(
+                                "Alpha Vantage gateway request retrying after invalid CSV payload "
+                                "(path=%s, attempt=%s/%s, sleep=%.1fs, error=%s, detail=%s).",
+                                path,
+                                attempt,
+                                attempts,
+                                sleep_seconds,
+                                type(csv_error).__name__,
+                                str(csv_error.detail or "")[:220],
+                            )
+                            if sleep_seconds > 0.0:
+                                time.sleep(sleep_seconds)
+                            delay_seconds = self._retry_request_delay(delay_seconds)
+                            self._reset_gateway_state()
+                            continue
+                        raise csv_error
                 self._record_circuit_success()
                 return resp
 
@@ -621,7 +733,12 @@ class AlphaVantageGatewayClient:
         params: dict[str, Any] = {"state": state}
         if date:
             params["date"] = date
-        resp = self._request("/api/providers/alpha-vantage/listing-status", params=params)
+        resp = self._request(
+            "/api/providers/alpha-vantage/listing-status",
+            params=params,
+            csv_required_headers=_LISTING_STATUS_CSV_HEADERS,
+            csv_require_data_row=True,
+        )
         return str(resp.text or "")
 
     def get_daily_time_series_csv(
