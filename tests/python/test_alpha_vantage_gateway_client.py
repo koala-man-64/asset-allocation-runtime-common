@@ -69,6 +69,52 @@ def test_retries_transient_status_with_retry_after(monkeypatch: pytest.MonkeyPat
     assert sleeps == [2.0]
 
 
+def test_listing_status_retries_200_throttle_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                text=(
+                    "Thank you for using Alpha Vantage! "
+                    "Our standard API call frequency is 5 calls per minute."
+                ),
+            )
+        return httpx.Response(200, text="symbol,name\nAAPL,Apple Inc.\n")
+
+    monkeypatch.setattr(alpha_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(alpha_module.random, "uniform", lambda _start, _end: 0.0)
+
+    client = _build_client(transport=httpx.MockTransport(handler), retry_attempts=2)
+    try:
+        payload = client.get_listing_status_csv()
+    finally:
+        client.close()
+
+    assert payload == "symbol,name\nAAPL,Apple Inc.\n"
+    assert calls == 2
+    assert sleeps == [1.0]
+
+
+def test_listing_status_rejects_empty_200_csv_payload() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="symbol,name\n")
+
+    client = _build_client(transport=httpx.MockTransport(handler), retry_attempts=1)
+    try:
+        with pytest.raises(AlphaVantageGatewayUnavailableError) as exc_info:
+            client.get_listing_status_csv()
+    finally:
+        client.close()
+
+    assert exc_info.value.status_code == 502
+    assert "non-CSV Alpha Vantage payload" in str(exc_info.value)
+
+
 def test_429_is_throttle_without_retry() -> None:
     calls = 0
 
