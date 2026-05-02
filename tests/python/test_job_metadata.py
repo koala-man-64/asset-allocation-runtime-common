@@ -120,3 +120,21 @@ def test_catalog_includes_required_strategy_compute_and_reconcile_jobs() -> None
     assert expected_job_metadata("backtests-job").jobCategory == "strategy-compute"  # type: ignore[union-attr]
     assert expected_job_metadata("backtests-reconcile-job").jobCategory == "operational-support"  # type: ignore[union-attr]
     assert expected_job_metadata("results-reconcile-job").jobCategory == "operational-support"  # type: ignore[union-attr]
+
+
+def test_catalog_includes_consolidated_bronze_quiver_job() -> None:
+    metadata = validate_job_metadata_tags(
+        "bronze-quiver-job",
+        {
+            "job-category": "data-pipeline",
+            "job-key": "quiver",
+            "job-role": "load",
+            "trigger-owner": "schedule",
+        },
+    )
+
+    assert metadata.jobCategory == "data-pipeline"
+    assert metadata.jobKey == "quiver"
+    assert metadata.jobRole == "load"
+    assert metadata.triggerOwner == "schedule"
+    assert metadata.metadataStatus == "valid"

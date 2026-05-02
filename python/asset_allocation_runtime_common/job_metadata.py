@@ -48,6 +48,7 @@ _CATALOG: dict[str, tuple[str, str, str, str]] = {
     "bronze-price-target-job": ("data-pipeline", "price-target", "load", "schedule"),
     "bronze-quiver-backfill-job": ("data-pipeline", "quiver", "backfill", "operator"),
     "bronze-quiver-data-job": ("data-pipeline", "quiver", "load", "schedule"),
+    "bronze-quiver-job": ("data-pipeline", "quiver", "load", "schedule"),
     "gold-earnings-job": ("data-pipeline", "earnings", "publish", "pipeline-chain"),
     "gold-economic-catalyst-job": ("data-pipeline", "economic-catalyst", "publish", "pipeline-chain"),
     "gold-finance-job": ("data-pipeline", "finance", "publish", "pipeline-chain"),
