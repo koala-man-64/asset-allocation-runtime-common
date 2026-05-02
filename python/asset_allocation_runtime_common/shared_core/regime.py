@@ -7,19 +7,23 @@ from typing import Any
 
 import pandas as pd
 from asset_allocation_contracts import regime as contracts_regime
+from pydantic import Field
 
 DEFAULT_HALT_REASON = contracts_regime.DEFAULT_HALT_REASON
 DEFAULT_REGIME_MODEL_NAME = contracts_regime.DEFAULT_REGIME_MODEL_NAME
 CurveState = contracts_regime.CurveState
 RegimeCode = contracts_regime.RegimeCode
 RegimeModelConfig = contracts_regime.RegimeModelConfig
-RegimePolicy = contracts_regime.RegimePolicy
 RegimeSignal = contracts_regime.RegimeSignal
 RegimeSignalConfig = contracts_regime.RegimeSignalConfig
 RegimeSignalState = contracts_regime.RegimeSignalState
 RegimeTransitionType = contracts_regime.RegimeTransitionType
 TrendState = contracts_regime.TrendState
 CANONICAL_DEFAULT_REGIME_VERSION = getattr(contracts_regime, "CANONICAL_DEFAULT_REGIME_VERSION", 3)
+
+
+class RegimePolicy(contracts_regime.RegimePolicy):
+    modelVersion: int | None = Field(default=None, ge=1)
 
 _TREND_POSITIVE_THRESHOLD = 0.02
 _TREND_NEGATIVE_THRESHOLD = -0.02
