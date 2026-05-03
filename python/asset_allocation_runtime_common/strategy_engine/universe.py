@@ -99,7 +99,12 @@ class _UniverseFieldBinding:
 
 _FIELD_BINDING_SPECS: tuple[tuple[str, str, str, str, tuple[UniverseConditionOperator, ...]], ...] = (
     ("market.close", "market_data", "close", "number", _NUMBER_OPERATORS),
+    ("market.dollar_volume_20d", "market_data", "dollar_volume_20d", "number", _NUMBER_OPERATORS),
     ("security.is_active", "market_data", "active", "boolean", _BOOLEAN_OPERATORS),
+    ("security.market_cap", "market_data", "market_cap", "number", _NUMBER_OPERATORS),
+    ("security.primary_listing", "market_data", "primary_listing", "boolean", _BOOLEAN_OPERATORS),
+    ("security.country", "market_data", "country", "string", _STRING_OPERATORS),
+    ("security.is_price_liquidity_eligible", "market_data", "price_liquidity_eligible", "boolean", _BOOLEAN_OPERATORS),
     ("security.sector", "market_data", "sector", "string", _STRING_OPERATORS),
     ("security.delisted_at", "market_data", "delisted_at", "date", _NUMBER_OPERATORS),
     ("market.trade_date", "market_data", "trade_date", "date", _NUMBER_OPERATORS),

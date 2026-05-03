@@ -35,6 +35,47 @@ def test_normalize_strategy_config_document_removes_disabled_structures() -> Non
     assert normalized["exits"] == [{"kind": "take_profit", "threshold": 0.1}]
 
 
+def test_strategy_config_accepts_legacy_flat_pins() -> None:
+    strategy_config = StrategyConfig.model_validate(
+        {
+            "universeConfigName": "us_large_liquid",
+            "universeConfigVersion": 1,
+            "rankingSchemaName": "momentum_12_1",
+            "rankingSchemaVersion": 1,
+            "rebalance": "monthly",
+            "longOnly": True,
+            "topN": 25,
+        }
+    )
+
+    assert strategy_config.universeConfigName == "us_large_liquid"
+    assert strategy_config.rankingSchemaVersion == 1
+
+
+def test_strategy_config_accepts_component_refs_and_normalization_preserves_them() -> None:
+    payload = {
+        "componentRefs": {
+            "universe": {"name": "us_large_liquid", "version": 1},
+            "ranking": {"name": "momentum_12_1", "version": 1},
+            "rebalance": {"name": "monthly_last_trading_day", "version": 1},
+            "regimePolicy": {"name": "observe_only_default", "version": 1},
+            "riskPolicy": {"name": "balanced_long_only", "version": 1},
+            "exitPolicy": {"name": "rank_decay_exit", "version": 1},
+        },
+        "rebalance": "monthly",
+        "longOnly": True,
+        "topN": 25,
+    }
+
+    strategy_config = StrategyConfig.model_validate(payload)
+    normalized = normalize_strategy_config_document(payload)
+
+    assert strategy_config.componentRefs is not None
+    assert strategy_config.componentRefs.rebalance is not None
+    assert strategy_config.componentRefs.rebalance.name == "monthly_last_trading_day"
+    assert normalized["componentRefs"]["exitPolicy"] == {"name": "rank_decay_exit", "version": 1}
+
+
 def test_get_strategy_reads_http_detail_and_normalizes_config() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
