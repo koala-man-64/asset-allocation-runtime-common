@@ -23,6 +23,15 @@ def test_transport_normalizes_base_url_from_env(monkeypatch: pytest.MonkeyPatch)
         transport.close()
 
 
+def test_transport_rejects_invalid_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASSET_ALLOCATION_API_BASE_URL", "https://control-plane.example/api/")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_SCOPE", "api://asset-allocation")
+    monkeypatch.setenv("ASSET_ALLOCATION_API_TIMEOUT_SECONDS", "not-a-number")
+
+    with pytest.raises(ValueError, match="ASSET_ALLOCATION_API_TIMEOUT_SECONDS must be a number."):
+        ControlPlaneTransport.from_env()
+
+
 def test_transport_adds_auth_and_caller_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTAINER_APP_JOB_NAME", "rankings-job")
     monkeypatch.setenv("CONTAINER_APP_JOB_EXECUTION_NAME", "rankings-job-7")

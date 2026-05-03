@@ -66,9 +66,10 @@ class ControlPlaneTransport:
             raise ValueError("ASSET_ALLOCATION_API_SCOPE is required for control-plane access.")
         raw_timeout = _strip_or_none(os.environ.get("ASSET_ALLOCATION_API_TIMEOUT_SECONDS")) or "30"
         try:
-            timeout_seconds = max(5.0, float(raw_timeout))
-        except Exception:
-            timeout_seconds = 30.0
+            timeout_seconds = float(raw_timeout)
+        except ValueError as exc:
+            raise ValueError("ASSET_ALLOCATION_API_TIMEOUT_SECONDS must be a number.") from exc
+        timeout_seconds = max(5.0, timeout_seconds)
         return cls(
             ControlPlaneTransportConfig(
                 base_url=_normalize_base_url(base_url),
