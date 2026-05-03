@@ -228,6 +228,21 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
             }
         ]
     )
+    data_quality_event_rows = _RowSource(
+        [
+            {
+                "event_seq": 1,
+                "bar_ts": "2026-03-03T14:35:00+00:00",
+                "severity": "error",
+                "table_name": "fundamental_signal_daily",
+                "symbol": "MSFT",
+                "field_name": "quality_score",
+                "reason_code": "available_after_bar",
+                "action": "exclude_value",
+                "details": {"available_at": "2026-03-03T14:37:00+00:00"},
+            }
+        ]
+    )
 
     backtest_results.persist_backtest_results(
         "postgresql://test",
@@ -263,6 +278,12 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
             "profit_factor": 0.0,
             "expectancy_pnl": 45.0,
             "expectancy_return": 0.045,
+            "research_integrity_status": "strict_passed",
+            "execution_model": "simple_bps",
+            "execution_model_quality": "not_tca_grade",
+            "approval_readiness": "research_only",
+            "data_quality_event_count": 1,
+            "policy_event_count": 1,
         },
         timeseries_rows=timeseries_rows,
         rolling_metric_rows=rolling_rows,
@@ -271,9 +292,10 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
         selection_trace_rows=selection_rows,
         regime_trace_rows=regime_rows,
         policy_event_rows=policy_event_rows,
+        data_quality_event_rows=data_quality_event_rows,
     )
 
-    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 6
+    assert backtest_results.BACKTEST_RESULTS_SCHEMA_VERSION == 7
     assert timeseries_rows.iterations == 1
     assert rolling_rows.iterations == 1
     assert trade_rows.iterations == 1
@@ -281,6 +303,7 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     assert selection_rows.iterations == 1
     assert regime_rows.iterations == 1
     assert policy_event_rows.iterations == 1
+    assert data_quality_event_rows.iterations == 1
     assert len(cursor.copied_tables["core.backtest_timeseries"]) == 2
     assert len(cursor.copied_tables["core.backtest_rolling_metrics"]) == 1
     assert len(cursor.copied_tables["core.backtest_trades"]) == 1
@@ -288,6 +311,7 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
     assert len(cursor.copied_tables["core.backtest_selection_trace"]) == 1
     assert len(cursor.copied_tables["core.backtest_regime_trace"]) == 1
     assert len(cursor.copied_tables["core.backtest_policy_events"]) == 1
+    assert len(cursor.copied_tables["core.backtest_data_quality_events"]) == 1
     assert cursor.copied_tables["core.backtest_timeseries"][0][4] == 0.01
     assert cursor.copied_tables["core.backtest_timeseries"][0][5] == 0.01
     assert cursor.copied_tables["core.backtest_timeseries"][1][4] == 0.0095
@@ -310,10 +334,31 @@ def test_persist_backtest_results_writes_all_tables_and_marks_run_ready(monkeypa
         "drift_threshold_met",
     ]
     assert json.loads(policy_event_row[-1]) == {"target_weight": 0.5}
+    data_quality_event_row = cursor.copied_tables["core.backtest_data_quality_events"][0]
+    assert data_quality_event_row[1:9] == [
+        1,
+        "2026-03-03T14:35:00+00:00",
+        "error",
+        "fundamental_signal_daily",
+        "MSFT",
+        "quality_score",
+        "available_after_bar",
+        "exclude_value",
+    ]
+    assert json.loads(data_quality_event_row[-1]) == {"available_at": "2026-03-03T14:37:00+00:00"}
+    summary_insert = next(params for sql, params in cursor.executed if "INSERT INTO core.backtest_run_summary" in sql)
+    assert summary_insert[-6:] == [
+        "strict_passed",
+        "simple_bps",
+        "not_tca_grade",
+        "research_only",
+        1,
+        1,
+    ]
     delete_tables = [
         " ".join(sql.split()).split("DELETE FROM ", 1)[1].split(" WHERE ", 1)[0]
         for sql, _ in cursor.executed
         if "DELETE FROM" in sql
     ]
-    assert delete_tables[0] == "core.backtest_policy_events"
+    assert delete_tables[:2] == ["core.backtest_data_quality_events", "core.backtest_policy_events"]
     assert any("UPDATE core.runs" in sql for sql, _ in cursor.executed)
