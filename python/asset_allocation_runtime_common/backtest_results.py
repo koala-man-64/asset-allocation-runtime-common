@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterable, Sequence
 from asset_allocation_runtime_common.postgres import connect, copy_rows
 
 
-BACKTEST_RESULTS_SCHEMA_VERSION = 6
+BACKTEST_RESULTS_SCHEMA_VERSION = 7
 
 _SUMMARY_COLUMNS = [
     "run_id",
@@ -40,6 +40,12 @@ _SUMMARY_COLUMNS = [
     "profit_factor",
     "expectancy_pnl",
     "expectancy_return",
+    "research_integrity_status",
+    "execution_model",
+    "execution_model_quality",
+    "approval_readiness",
+    "data_quality_event_count",
+    "policy_event_count",
 ]
 _TIMESERIES_COLUMNS = [
     "run_id",
@@ -145,6 +151,18 @@ _POLICY_EVENT_COLUMNS = [
     "action",
     "details",
 ]
+_DATA_QUALITY_EVENT_COLUMNS = [
+    "run_id",
+    "event_seq",
+    "bar_ts",
+    "severity",
+    "table_name",
+    "symbol",
+    "field_name",
+    "reason_code",
+    "action",
+    "details",
+]
 
 
 def _coalesce_value(row: dict[str, Any], *keys: str) -> Any:
@@ -187,6 +205,12 @@ def _build_summary_row(run_id: str, summary: dict[str, Any]) -> list[Any]:
         summary.get("profit_factor"),
         summary.get("expectancy_pnl"),
         summary.get("expectancy_return"),
+        summary.get("research_integrity_status"),
+        summary.get("execution_model"),
+        summary.get("execution_model_quality"),
+        summary.get("approval_readiness"),
+        summary.get("data_quality_event_count"),
+        summary.get("policy_event_count"),
     ]
 
 
@@ -319,8 +343,24 @@ def _build_policy_event_row(run_id: str, row: dict[str, Any], index: int) -> lis
     ]
 
 
+def _build_data_quality_event_row(run_id: str, row: dict[str, Any], index: int) -> list[Any]:
+    return [
+        run_id,
+        row.get("event_seq") or index,
+        row.get("bar_ts") or row.get("date"),
+        row.get("severity"),
+        row.get("table_name"),
+        row.get("symbol"),
+        row.get("field_name"),
+        row.get("reason_code"),
+        row.get("action"),
+        json.dumps(dict(row.get("details") or {}), sort_keys=True),
+    ]
+
+
 def _delete_existing_result_rows(cur: Any, run_id: str) -> None:
     for table_name in (
+        "core.backtest_data_quality_events",
         "core.backtest_policy_events",
         "core.backtest_regime_trace",
         "core.backtest_selection_trace",
@@ -378,6 +418,7 @@ def persist_backtest_results(
     selection_trace_rows: Iterable[dict[str, Any]] | None = None,
     regime_trace_rows: Iterable[dict[str, Any]] | None = None,
     policy_event_rows: Iterable[dict[str, Any]] | None = None,
+    data_quality_event_rows: Iterable[dict[str, Any]] | None = None,
     results_schema_version: int = BACKTEST_RESULTS_SCHEMA_VERSION,
 ) -> None:
     with connect(dsn) as conn:
@@ -417,9 +458,15 @@ def persist_backtest_results(
                     payoff_ratio,
                     profit_factor,
                     expectancy_pnl,
-                    expectancy_return
+                    expectancy_return,
+                    research_integrity_status,
+                    execution_model,
+                    execution_model_quality,
+                    approval_readiness,
+                    data_quality_event_count,
+                    policy_event_count
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 _build_summary_row(run_id, summary),
             )
@@ -477,6 +524,14 @@ def persist_backtest_results(
                 columns=_POLICY_EVENT_COLUMNS,
                 rows=policy_event_rows,
                 row_builder=lambda row, index: _build_policy_event_row(run_id, row, index),
+                run_id=run_id,
+            )
+            _copy_dataset(
+                cur,
+                table="core.backtest_data_quality_events",
+                columns=_DATA_QUALITY_EVENT_COLUMNS,
+                rows=data_quality_event_rows,
+                row_builder=lambda row, index: _build_data_quality_event_row(run_id, row, index),
                 run_id=run_id,
             )
             cur.execute(
