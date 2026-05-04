@@ -3,16 +3,30 @@ from asset_allocation_runtime_common.market_data.gold_column_lookup_catalog impo
 from asset_allocation_runtime_common.market_data.gold_sync_contracts import GoldSyncResult, load_domain_sync_state
 from asset_allocation_runtime_common.market_data.market_symbols import REGIME_REQUIRED_MARKET_SYMBOLS
 from asset_allocation_runtime_common.market_data.pipeline import DataPaths, ListManager, ScraperRunner
+from asset_allocation_runtime_common.market_data.symbol_identity import (
+    AmbiguousSymbolMappingError,
+    InvalidSymbolInputError,
+    SymbolIdentityResolutionError,
+    UnsupportedProviderSymbolError,
+    canonicalize_provider_symbol,
+    provider_symbol_for_query,
+)
 
 __all__ = [
+    "AmbiguousSymbolMappingError",
     "DataPaths",
     "GoldSyncResult",
+    "InvalidSymbolInputError",
     "ListManager",
     "REGIME_REQUIRED_MARKET_SYMBOLS",
     "SUPPORTED_GOLD_LOOKUP_TABLES",
     "ScraperRunner",
+    "SymbolIdentityResolutionError",
+    "UnsupportedProviderSymbolError",
+    "canonicalize_provider_symbol",
     "load_domain_artifact",
     "load_domain_sync_state",
+    "provider_symbol_for_query",
     "write_bucket_artifact",
     "write_domain_artifact",
 ]
