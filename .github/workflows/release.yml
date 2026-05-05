@@ -127,21 +127,25 @@ jobs:
               os.environ["PYTHON_PUBLISH_REPOSITORY_URL"],
               package_name,
           )
-          if registry_json_url:
-              try:
-                  with urllib.request.urlopen(registry_json_url, timeout=30) as response:
-                      payload = json.load(response)
-              except urllib.error.HTTPError as exc:
-                  if exc.code != 404:
-                      raise
-              else:
-                  registry_versions = {
-                      version
-                      for version in payload.get("releases", {})
-                      if SEMVER.fullmatch(version)
-                  }
-                  if registry_versions:
-                      latest_published_version = max(registry_versions, key=parse_semver)
+          if not registry_json_url:
+              raise SystemExit(
+                  "Unsupported PYTHON_PUBLISH_REPOSITORY_URL for release verification; "
+                  "registry artifact versions must be queryable before publishing."
+              )
+          try:
+              with urllib.request.urlopen(registry_json_url, timeout=30) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+          else:
+              registry_versions = {
+                  version
+                  for version in payload.get("releases", {})
+                  if SEMVER.fullmatch(version)
+              }
+              if registry_versions:
+                  latest_published_version = max(registry_versions, key=parse_semver)
 
           stable_tags = sorted(
               (
@@ -259,7 +263,6 @@ jobs:
           : "${PYTHON_PUBLISH_PASSWORD:?Set secret PYTHON_PUBLISH_PASSWORD.}"
           python -m twine upload \
             --repository-url "${PYTHON_PUBLISH_REPOSITORY_URL}" \
-            --skip-existing \
             -u "${PYTHON_PUBLISH_USERNAME}" \
             -p "${PYTHON_PUBLISH_PASSWORD}" \
             artifacts/python/*
@@ -270,6 +273,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           python - <<'PY'
+          import hashlib
           import json
           import os
           import re
@@ -289,11 +293,20 @@ jobs:
                   "python/pyproject.toml must declare an exact asset-allocation-contracts dependency for release manifests."
               )
 
+          artifact_paths = sorted(p for p in Path("artifacts/python").iterdir() if p.is_file())
+          artifact_hashes = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in artifact_paths
+          }
+
           manifest = {
               "repo": os.environ["GITHUB_REPOSITORY"],
               "git_sha": os.environ["RELEASE_GIT_SHA"],
               "artifact_kind": "python-package",
-              "artifact_ref": sorted(p.name for p in Path("artifacts/python").iterdir()),
+              "artifact_ref": [path.name for path in artifact_paths],
+              "artifact_hashes": artifact_hashes,
+              "release_run_id": os.environ["GITHUB_RUN_ID"],
+              "release_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "version_matrix": {
                   "contracts": contracts_version,
                   "runtime_common": os.environ["RUNTIME_COMMON_VERSION"],

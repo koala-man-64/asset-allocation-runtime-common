@@ -61,7 +61,7 @@ Dispatch `Runtime Common Release` from `main` and choose the semver increment th
 - `minor` for additive compatible surface changes
 - `major` for breaking contract changes
 
-If the tracked version in `python/pyproject.toml` is already ahead of PyPI, or if `main` is already tagged for that exact version, the workflow reuses it instead of bumping again. Uploads use `twine --skip-existing`, so reruns can recover from partial failures without tripping on duplicate-file errors.
+If the tracked version in `python/pyproject.toml` is already ahead of the verified registry, or if `main` is already tagged for that exact version, the workflow reuses it instead of bumping again. The workflow fails closed when the package registry cannot be queried for existing versions, uploads without `twine --skip-existing`, and records SHA256 hashes for every wheel and sdist in `artifacts/release-manifest.json`.
 
 When the workflow needs a new release version, it updates only these tracked files before tagging and publishing:
 

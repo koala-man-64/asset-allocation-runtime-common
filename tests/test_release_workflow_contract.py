@@ -54,6 +54,16 @@ def test_release_manifest_records_runtime_common_and_contracts_versions() -> Non
     assert '"contracts": contracts_version,' in text
     assert '"runtime_common": os.environ["RUNTIME_COMMON_VERSION"],' in text
     assert "must declare an exact asset-allocation-contracts dependency for release manifests." in text
+    assert "hashlib.sha256" in text
+    assert '"artifact_hashes": artifact_hashes,' in text
+    assert '"release_run_id": os.environ["GITHUB_RUN_ID"],' in text
+
+
+def test_release_workflow_fails_closed_when_registry_versions_cannot_be_verified() -> None:
+    text = release_workflow_text()
+    assert "Unsupported PYTHON_PUBLISH_REPOSITORY_URL for release verification" in text
+    assert "registry artifact versions must be queryable before publishing" in text
+    assert "--skip-existing" not in text
 
 
 def test_runtime_common_dispatch_config_surface_excludes_ui() -> None:
