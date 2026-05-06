@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Active |
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
-| Canonical Baseline | `main` branch, package version `3.7.1` in `python/pyproject.toml` |
+| Canonical Baseline | `main` branch, package version `3.7.2` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
 | Last Reviewed | 2026-04-21 |
 | Change Class | Decision Capture |
@@ -795,6 +795,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 
 | Date | Decision | Impacted Sections | Review Status |
 | --- | --- | --- | --- |
+| 2026-05-06 | Publish runtime-common as `3.7.2` so Massive provider symbol availability skips invalid placeholder listing rows while preserving strict canonical symbol validation and empty-provider fail-fast behavior. | 6, 8, 9, 11, 13 | Active |
 | 2026-05-02 | Add the consolidated `bronze-quiver-job` ACA job metadata catalog entry and advance runtime-common to `3.5.4` for downstream jobs adoption. | 6, 8, 11, 13 | Active |
 | 2026-05-03 | Advance `asset-allocation-contracts` to the exact `3.18.0` release and publish runtime-common as `3.7.0` for symbol alias resolution. | 6, 8, 11, 13 | Active |
 | 2026-05-02 | Advance `asset-allocation-contracts` to the exact `3.14.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Superseded |

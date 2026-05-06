@@ -1,5 +1,12 @@
 # Cutover Release Notes
 
+## 3.7.2
+
+- Massive provider symbol availability now skips invalid placeholder listing rows such as `N/A`, `NA`, and `UNKNOWN` instead of aborting the entire market or finance availability sync.
+- The sync result continues to publish `alias_resolution_failure_count` so jobs can observe skipped provider rows.
+- Strict canonical symbol validation is unchanged; unsupported provider aliases still fail instead of being silently accepted.
+- Empty provider symbol sets still fail before Postgres sync.
+
 ## Delivered
 
 - Introduced `asset-allocation-runtime-common` as the canonical shared backend package.

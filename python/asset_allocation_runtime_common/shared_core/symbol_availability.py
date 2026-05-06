@@ -20,7 +20,10 @@ from asset_allocation_runtime_common.shared_core import core as mdc
 from asset_allocation_runtime_common.shared_core.alpha_vantage_gateway_client import AlphaVantageGatewayClient
 from asset_allocation_runtime_common.shared_core.massive_gateway_client import MassiveGatewayClient
 from asset_allocation_runtime_common.shared_core.postgres import connect
-from asset_allocation_runtime_common.shared_core.symbol_identity import canonicalize_provider_symbol
+from asset_allocation_runtime_common.shared_core.symbol_identity import (
+    InvalidSymbolInputError,
+    canonicalize_provider_symbol,
+)
 
 DomainName = Literal["market", "finance", "earnings", "price-target"]
 ProviderName = Literal["massive", "alpha_vantage", "nasdaq"]
@@ -44,6 +47,7 @@ PROVIDER_SOURCE_COLUMN_MAP: dict[ProviderName, str] = {
 }
 _MARKET_ALLOWED_ASSET_TYPES = frozenset({"STOCK", "ETF", "FUND", "CS", "ETS", "ETV", "ETN"})
 _MARKET_REQUIRED_SYMBOLS = frozenset({"SPY", "^VIX", "^VIX3M"})
+_INVALID_SYMBOL_LOG_SAMPLE_LIMIT = 5
 _ADVISORY_LOCK_KEYS: dict[str, tuple[int, int]] = {
     "source_massive": (11873, 42021),
     "source_alpha_vantage": (11873, 42022),
@@ -101,6 +105,16 @@ def _normalize_asset_type(value: object) -> str:
     return str(value or "").strip().upper()
 
 
+def _log_invalid_massive_symbols(invalid_symbols: list[tuple[str, str]]) -> None:
+    if not invalid_symbols:
+        return
+    sample = ", ".join(f"{symbol}:{reason}" for symbol, reason in invalid_symbols[:_INVALID_SYMBOL_LOG_SAMPLE_LIMIT])
+    mdc.write_warning(
+        "Massive ticker sync skipped invalid symbol records: "
+        f"count={len(invalid_symbols)} sample={sample}"
+    )
+
+
 def _normalize_bool_series(series: pd.Series | object, *, index: pd.Index) -> pd.Series:
     if not isinstance(series, pd.Series):
         return pd.Series(False, index=index, dtype=bool)
@@ -126,6 +140,7 @@ def get_symbol_availability_mask(
 def _normalize_massive_records(records: list[dict[str, object]]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     alias_resolution_count = 0
+    invalid_symbols: list[tuple[str, str]] = []
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -133,7 +148,11 @@ def _normalize_massive_records(records: list[dict[str, object]]) -> pd.DataFrame
         normalized_raw = _normalize_symbol(raw_symbol)
         if not normalized_raw:
             continue
-        symbol = _normalize_massive_symbol(raw_symbol)
+        try:
+            symbol = _normalize_massive_symbol(raw_symbol)
+        except InvalidSymbolInputError as exc:
+            invalid_symbols.append((normalized_raw, str(exc)))
+            continue
         if symbol != normalized_raw:
             alias_resolution_count += 1
         rows.append(
@@ -145,13 +164,18 @@ def _normalize_massive_records(records: list[dict[str, object]]) -> pd.DataFrame
                 "source_massive": True,
             }
         )
+    _log_invalid_massive_symbols(invalid_symbols)
     if not rows:
-        return pd.DataFrame(columns=["Symbol", "Name", "Exchange", "AssetType", "source_massive"])
+        out = pd.DataFrame(columns=["Symbol", "Name", "Exchange", "AssetType", "source_massive"])
+        out.attrs["alias_resolution_count"] = alias_resolution_count
+        out.attrs["alias_resolution_failure_count"] = len(invalid_symbols)
+        return out
     out = pd.DataFrame(rows)
     out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
     out = out[out["Symbol"].ne("")]
     out = out.drop_duplicates(subset=["Symbol"]).reset_index(drop=True)
     out.attrs["alias_resolution_count"] = alias_resolution_count
+    out.attrs["alias_resolution_failure_count"] = len(invalid_symbols)
     return out
 
 
