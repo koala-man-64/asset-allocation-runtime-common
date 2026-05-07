@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Active |
 | Applies To | `asset-allocation-runtime-common` repository and published Python package |
-| Canonical Baseline | `main` branch, package version `3.7.2` in `python/pyproject.toml` |
+| Canonical Baseline | `main` branch, package version `3.7.3` in `python/pyproject.toml` |
 | Owner | Repository code owner `@rdprokes` from `.github/CODEOWNERS` |
 | Last Reviewed | 2026-04-21 |
 | Change Class | Decision Capture |
@@ -800,6 +800,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 | 2026-05-03 | Advance `asset-allocation-contracts` to the exact `3.18.0` release and publish runtime-common as `3.7.0` for symbol alias resolution. | 6, 8, 11, 13 | Active |
 | 2026-05-02 | Advance `asset-allocation-contracts` to the exact `3.14.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Superseded |
 | 2026-04-26 | Advance `asset-allocation-contracts` to the exact `3.7.0` release and add runtime-common transport adapters for released intraday append plus notification/trade-approval contracts. | 5, 6, 8, 11, 13 | Active |
+| 2026-04-26 | Type strategy risk-profile position-policy snapshots for backtest/runtime enforcement; later dependency-advance decisions own the current exact contracts pin. | 5, 6, 8, 11, 13 | Active |
 | 2026-04-25 | Advance `asset-allocation-contracts` to the exact `3.5.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Superseded |
 | 2026-04-24 | Add shared ACA job metadata validation/normalization and a producer-only strategy publication signal client; advance `asset-allocation-contracts` to the exact `3.3.0` release and runtime-common to `3.4.0` for downstream adoption. | 1, 2, 4, 6, 8, 11, 13 | Active |
 | 2026-04-23 | Advance `asset-allocation-contracts` to the exact `3.2.0` release in source so runtime-common publishes against the latest stable shared package version that matches the contract modules already used here. | 6, 8, 11, 13 | Superseded |
