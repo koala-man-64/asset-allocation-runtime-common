@@ -10,6 +10,11 @@ import pandas as pd
 import requests
 
 from asset_allocation_runtime_common.shared_core.redaction import redact_text
+from asset_allocation_runtime_common.shared_core.timeout_circuit_breaker import (
+    TimeoutCircuitBreakerConfig,
+    TimeoutCircuitOpenState,
+    get_timeout_circuit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +22,8 @@ _DEFAULT_BASE_URL = "https://api.massive.com"
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_PAGE_LIMIT = 1000
 _MAX_PAGE_LIMIT = 1000
+_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
+_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 300.0
 
 
 class MassiveProviderError(RuntimeError):
@@ -26,12 +33,20 @@ class MassiveProviderError(RuntimeError):
         super().__init__(redact_text(message))
 
 
+class MassiveProviderCircuitOpenError(MassiveProviderError):
+    def __init__(self, message: str, *, retry_after_seconds: float) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = float(retry_after_seconds)
+
+
 @dataclass(frozen=True)
 class MassiveProviderConfig:
     api_key: str
     base_url: str = _DEFAULT_BASE_URL
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
     page_limit: int = _DEFAULT_PAGE_LIMIT
+    circuit_breaker_failure_threshold: int = _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    circuit_breaker_open_seconds: float = _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS
 
 
 def _strip_or_none(value: object) -> Optional[str]:
@@ -63,6 +78,30 @@ def _to_page_limit(value: object, *, default: int) -> int:
     if parsed <= 0:
         return int(default)
     return int(min(parsed, _MAX_PAGE_LIMIT))
+
+
+def _to_positive_int(value: object, *, default: int) -> int:
+    if value is None:
+        return int(default)
+    try:
+        parsed = int(value)
+    except Exception:
+        return int(default)
+    if parsed < 1:
+        return int(default)
+    return int(parsed)
+
+
+def _to_non_negative_float(value: object, *, default: float) -> float:
+    if value is None:
+        return float(default)
+    try:
+        parsed = float(value)
+    except Exception:
+        return float(default)
+    if parsed < 0:
+        return float(default)
+    return float(parsed)
 
 
 def _to_optional_bool(value: object) -> Optional[bool]:
@@ -116,9 +155,25 @@ class MassiveProvider:
             base_url=(str(config.base_url).strip() or _DEFAULT_BASE_URL).rstrip("/"),
             timeout_seconds=_to_positive_float(config.timeout_seconds, default=_DEFAULT_TIMEOUT_SECONDS),
             page_limit=_to_page_limit(config.page_limit, default=_DEFAULT_PAGE_LIMIT),
+            circuit_breaker_failure_threshold=_to_positive_int(
+                config.circuit_breaker_failure_threshold,
+                default=_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+            ),
+            circuit_breaker_open_seconds=_to_non_negative_float(
+                config.circuit_breaker_open_seconds,
+                default=_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS,
+            ),
         )
         self._owns_session = session is None
         self._session = session or requests.Session()
+        self._timeout_circuit_config = TimeoutCircuitBreakerConfig(
+            failure_threshold=self.config.circuit_breaker_failure_threshold,
+            open_seconds=self.config.circuit_breaker_open_seconds,
+        )
+        self._timeout_circuit = get_timeout_circuit(
+            provider="massive-provider",
+            scope_key=self.config.base_url,
+        )
 
     @classmethod
     def from_env(cls, *, session: Optional[requests.Session] = None) -> "MassiveProvider":
@@ -135,6 +190,14 @@ class MassiveProvider:
             _strip_or_none(os.environ.get("MASSIVE_TICKERS_PAGE_LIMIT")),
             default=_DEFAULT_PAGE_LIMIT,
         )
+        circuit_breaker_failure_threshold = _to_positive_int(
+            _strip_or_none(os.environ.get("MASSIVE_CIRCUIT_FAILURE_THRESHOLD")),
+            default=_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        )
+        circuit_breaker_open_seconds = _to_non_negative_float(
+            _strip_or_none(os.environ.get("MASSIVE_CIRCUIT_OPEN_SECONDS")),
+            default=_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS,
+        )
 
         return cls(
             MassiveProviderConfig(
@@ -142,6 +205,8 @@ class MassiveProvider:
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 page_limit=page_limit,
+                circuit_breaker_failure_threshold=circuit_breaker_failure_threshold,
+                circuit_breaker_open_seconds=circuit_breaker_open_seconds,
             ),
             session=session,
         )
@@ -156,18 +221,60 @@ class MassiveProvider:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    def _safe_request_path(self, url: str) -> str:
+        parsed = urlparse(url)
+        return parsed.path or "/"
+
+    def _raise_if_timeout_circuit_open(self, *, url: str) -> None:
+        state = self._timeout_circuit.before_call(self._timeout_circuit_config)
+        if state is None:
+            return
+        raise MassiveProviderCircuitOpenError(
+            f"Massive provider timeout circuit breaker is open for {state.retry_after_seconds:.1f} seconds.",
+            retry_after_seconds=state.retry_after_seconds,
+        )
+
+    def _record_timeout_circuit_response(self) -> None:
+        self._timeout_circuit.record_non_timeout_response()
+
+    def _record_timeout_circuit_timeout(self, *, url: str, reason: str) -> Optional[TimeoutCircuitOpenState]:
+        return self._timeout_circuit.record_timeout(
+            self._timeout_circuit_config,
+            reason=reason,
+            path=self._safe_request_path(url),
+        )
+
     def _request_json(
         self,
         url: str,
         *,
         params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        self._raise_if_timeout_circuit_open(url=url)
         try:
             response = self._session.get(
                 url,
                 params=params or None,
                 timeout=float(self.config.timeout_seconds),
             )
+        except requests.Timeout as exc:
+            self._record_timeout_circuit_timeout(url=url, reason="timeout_exception")
+            raise MassiveProviderError(
+                f"Massive request timed out for path={self._safe_request_path(url)!r}: {type(exc).__name__}: {exc}"
+            ) from None
+        except requests.RequestException as exc:
+            raise MassiveProviderError(
+                f"Massive request failed for url={url!r}: {type(exc).__name__}: {exc}"
+            ) from None
+
+        if response.status_code in {408, 504}:
+            self._record_timeout_circuit_timeout(url=url, reason=f"status_{response.status_code}")
+            raise MassiveProviderError(
+                f"Massive request timed out for path={self._safe_request_path(url)!r}: status={response.status_code}"
+            )
+
+        self._record_timeout_circuit_response()
+        try:
             response.raise_for_status()
         except requests.RequestException as exc:
             raise MassiveProviderError(
@@ -312,6 +419,8 @@ def get_complete_ticker_list(
     base_url: Optional[str] = None,
     timeout_seconds: Optional[float] = None,
     page_limit: Optional[int] = None,
+    circuit_breaker_failure_threshold: Optional[int] = None,
+    circuit_breaker_open_seconds: Optional[float] = None,
     market: str = "stocks",
     locale: Optional[str] = "us",
     active: bool = True,
@@ -337,12 +446,26 @@ def get_complete_ticker_list(
         page_limit if page_limit is not None else _strip_or_none(os.environ.get("MASSIVE_TICKERS_PAGE_LIMIT")),
         default=_DEFAULT_PAGE_LIMIT,
     )
+    resolved_circuit_breaker_failure_threshold = _to_positive_int(
+        circuit_breaker_failure_threshold
+        if circuit_breaker_failure_threshold is not None
+        else _strip_or_none(os.environ.get("MASSIVE_CIRCUIT_FAILURE_THRESHOLD")),
+        default=_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    )
+    resolved_circuit_breaker_open_seconds = _to_non_negative_float(
+        circuit_breaker_open_seconds
+        if circuit_breaker_open_seconds is not None
+        else _strip_or_none(os.environ.get("MASSIVE_CIRCUIT_OPEN_SECONDS")),
+        default=_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS,
+    )
 
     config = MassiveProviderConfig(
         api_key=resolved_key,
         base_url=resolved_base_url,
         timeout_seconds=resolved_timeout,
         page_limit=resolved_page_limit,
+        circuit_breaker_failure_threshold=resolved_circuit_breaker_failure_threshold,
+        circuit_breaker_open_seconds=resolved_circuit_breaker_open_seconds,
     )
     with MassiveProvider(config, session=session) as provider:
         records = provider.list_tickers(

@@ -13,7 +13,13 @@ from asset_allocation_runtime_common.shared_core.quiver_gateway_client import (
 )
 
 
-def _build_client(*, transport: httpx.BaseTransport | None = None) -> QuiverGatewayClient:
+def _build_client(
+    *,
+    transport: httpx.BaseTransport | None = None,
+    retry_attempts: int = 3,
+    circuit_failure_threshold: int = 3,
+    circuit_open_seconds: float = 60.0,
+) -> QuiverGatewayClient:
     http_client = None
     if transport is not None:
         http_client = httpx.Client(transport=transport, timeout=httpx.Timeout(5.0), trust_env=False)
@@ -24,6 +30,9 @@ def _build_client(*, transport: httpx.BaseTransport | None = None) -> QuiverGate
             timeout_seconds=60.0,
             warmup_enabled=False,
             readiness_enabled=False,
+            request_retry_attempts=retry_attempts,
+            circuit_breaker_failure_threshold=circuit_failure_threshold,
+            circuit_breaker_open_seconds=circuit_open_seconds,
         ),
         http_client=http_client,
         access_token_provider=lambda: "oidc-token",
@@ -228,6 +237,18 @@ _INVALID_ENV_CASES = [
         "bad",
         "ASSET_ALLOCATION_API_READINESS_SLEEP_SECONDS must be a number.",
         id="readiness-sleep",
+    ),
+    pytest.param(
+        "QUIVER_GATEWAY_CIRCUIT_FAILURE_THRESHOLD",
+        "bad",
+        "QUIVER_GATEWAY_CIRCUIT_FAILURE_THRESHOLD must be an integer.",
+        id="circuit-threshold",
+    ),
+    pytest.param(
+        "QUIVER_GATEWAY_CIRCUIT_OPEN_SECONDS",
+        "bad",
+        "QUIVER_GATEWAY_CIRCUIT_OPEN_SECONDS must be a number.",
+        id="circuit-open-seconds",
     ),
 ]
 
@@ -449,3 +470,57 @@ def test_disabled_gateway_response_is_typed_redacted_and_not_retried() -> None:
     assert "provider-secret" not in str(exc_info.value)
     assert "provider-secret" not in str(exc_info.value.detail)
     assert "provider-secret" not in str(exc_info.value.payload)
+
+
+def test_quiver_timeout_circuit_fails_fast_after_timeout() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/providers/quiver/live/congress-holdings"
+        calls += 1
+        raise httpx.ReadTimeout("timeout apiKey=provider-secret")
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(QuiverGatewayUnavailableError):
+            client.get_live_congress_holdings()
+        with pytest.raises(QuiverGatewayUnavailableError) as exc_info:
+            client.get_live_congress_holdings()
+    finally:
+        client.close()
+
+    assert calls == 1
+    assert "timeout circuit breaker is open" in str(exc_info.value)
+    assert exc_info.value.payload["retry_after_seconds"] > 0
+
+
+def test_quiver_ordinary_5xx_does_not_open_timeout_circuit() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/providers/quiver/live/congress-holdings"
+        calls += 1
+        return httpx.Response(503, json={"detail": "gateway warming"})
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(QuiverGatewayUnavailableError):
+            client.get_live_congress_holdings()
+        with pytest.raises(QuiverGatewayUnavailableError):
+            client.get_live_congress_holdings()
+    finally:
+        client.close()
+
+    assert calls == 2

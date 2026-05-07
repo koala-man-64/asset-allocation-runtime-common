@@ -170,13 +170,13 @@ def test_transient_error_detail_and_payload_are_redacted() -> None:
     assert "provider-secret" not in str(exc_info.value.payload)
 
 
-def test_circuit_breaker_fails_fast_after_unavailable_error() -> None:
+def test_timeout_circuit_breaker_fails_fast_after_timeout() -> None:
     calls = 0
 
     def handler(_request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(503, json={"detail": "gateway warming"})
+        raise httpx.ReadTimeout("timeout apiKey=provider-secret")
 
     client = _build_client(
         transport=httpx.MockTransport(handler),
@@ -193,4 +193,55 @@ def test_circuit_breaker_fails_fast_after_unavailable_error() -> None:
         client.close()
 
     assert calls == 1
-    assert "circuit breaker is open" in str(exc_info.value)
+    assert "timeout circuit breaker is open" in str(exc_info.value)
+    assert exc_info.value.payload["retry_after_seconds"] > 0
+
+
+def test_ordinary_5xx_does_not_open_timeout_circuit() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"detail": "gateway warming"})
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(AlphaVantageGatewayUnavailableError):
+            client.get_listing_status_csv()
+        with pytest.raises(AlphaVantageGatewayUnavailableError):
+            client.get_listing_status_csv()
+    finally:
+        client.close()
+
+    assert calls == 2
+
+
+def test_invalid_csv_does_not_open_timeout_circuit() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, text="not,a,listing,status\n")
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(AlphaVantageGatewayUnavailableError):
+            client.get_listing_status_csv()
+        with pytest.raises(AlphaVantageGatewayUnavailableError):
+            client.get_listing_status_csv()
+    finally:
+        client.close()
+
+    assert calls == 2
