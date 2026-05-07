@@ -262,7 +262,7 @@ Any change to this transform is a consumer-visible behavior change and must be v
 ### Consumer Installation and Contracts Version Pin
 **Contract**
 
-Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.18.0` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
+Consumer repos must consume this package as a versioned dependency rather than through sibling source checkout or vendoring. Within this repo, `asset-allocation-contracts==3.20.1` is declared as the current exact shared-package dependency in `python/pyproject.toml`. CI verifies that the exact pin resolves from the configured package index and that built wheel and sdist metadata declare the same exact pin. Security verification also requires that the declared exact pin resolves before audit.
 
 **Why**
 
@@ -543,7 +543,7 @@ Unblocking writes is an ownership decision and requires aligned updates to archi
 ### Python, Runtime, and Dependency Constraints
 **Contract**
 
-This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.18.0` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
+This package currently targets Python `>=3.14,<3.15` and runtime dependencies `azure-identity==1.25.2` and `httpx==0.28.1`. The repo also declares `asset-allocation-contracts==3.20.1` as the current exact shared-package dependency, and CI plus security verification require that the exact pin resolves. CI also validates that the built wheel and sdist metadata preserve the same exact pin. Test-only dependencies are declared separately.
 
 **Why**
 
@@ -797,7 +797,7 @@ Future cleanup work should use this rule to decide whether to share more code or
 | --- | --- | --- | --- |
 | 2026-05-06 | Publish runtime-common as `3.7.2` so Massive provider symbol availability skips invalid placeholder listing rows while preserving strict canonical symbol validation and empty-provider fail-fast behavior. | 6, 8, 9, 11, 13 | Active |
 | 2026-05-02 | Add the consolidated `bronze-quiver-job` ACA job metadata catalog entry and advance runtime-common to `3.5.4` for downstream jobs adoption. | 6, 8, 11, 13 | Active |
-| 2026-05-03 | Advance `asset-allocation-contracts` to the exact `3.18.0` release and publish runtime-common as `3.7.0` for symbol alias resolution. | 6, 8, 11, 13 | Active |
+| 2026-05-07 | Advance `asset-allocation-contracts` to the exact `3.20.1` release and add the typed stock screener client for the published screener contract. | 6, 8, 11, 13 | Active |
 | 2026-05-02 | Advance `asset-allocation-contracts` to the exact `3.14.0` release in source so runtime-common publishes against the current stable shared package version. | 6, 8, 11, 13 | Superseded |
 | 2026-04-26 | Advance `asset-allocation-contracts` to the exact `3.7.0` release and add runtime-common transport adapters for released intraday append plus notification/trade-approval contracts. | 5, 6, 8, 11, 13 | Active |
 | 2026-04-26 | Type strategy risk-profile position-policy snapshots for backtest/runtime enforcement; later dependency-advance decisions own the current exact contracts pin. | 5, 6, 8, 11, 13 | Active |

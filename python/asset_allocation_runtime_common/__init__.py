@@ -20,6 +20,7 @@ from asset_allocation_runtime_common.job_metadata import (
 from asset_allocation_runtime_common.intraday_repository import IntradayRepository
 from asset_allocation_runtime_common.notification_repository import NotificationRepository
 from asset_allocation_runtime_common.strategy_publication_repository import StrategyPublicationRepository
+from asset_allocation_runtime_common.stock_screener_repository import StockScreenerRepository
 from asset_allocation_runtime_common.ranking_repository import RankingRepository
 from asset_allocation_runtime_common.regime_repository import RegimeRepository
 from asset_allocation_runtime_common.results_repository import ResultsRepository
@@ -44,6 +45,7 @@ __all__ = [
     "ResultsRepository",
     "StrategyRepository",
     "StrategyPublicationRepository",
+    "StockScreenerRepository",
     "SymbolEnrichmentRepository",
     "UniverseRepository",
     "build_access_token_provider",
