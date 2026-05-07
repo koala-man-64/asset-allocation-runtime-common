@@ -40,6 +40,7 @@ def _definition_with_position_policy(
     position_policy: dict[str, object],
     *,
     top_n: int = 3,
+    risk_profile_name: str | None = None,
 ) -> ResolvedBacktestDefinition:
     universe = _sample_universe()
     raw_config = {
@@ -52,6 +53,7 @@ def _definition_with_position_policy(
         "costModel": "default",
         "rankingSchemaName": "quality",
         "intrabarConflictPolicy": "stop_first",
+        "riskProfileName": risk_profile_name,
         "positionPolicy": position_policy,
         "exits": [],
     }
@@ -120,6 +122,26 @@ def test_score_snapshot_applies_position_policy_limits() -> None:
     selected = ranked[ranked["selected"]]
     assert selected["symbol"].tolist() == ["AAPL", "MSFT"]
     assert selected["target_weight"].tolist() == pytest.approx([0.2, 0.2])
+
+
+def test_score_snapshot_uses_embedded_policy_snapshot_when_risk_profile_name_is_present() -> None:
+    ranked = _score_snapshot(
+        _ranking_snapshot(),
+        definition=_definition_with_position_policy(
+            {
+                "targetPositionSize": {"mode": "pct_of_allocatable_capital", "value": 8},
+                "maxPositionSize": {"mode": "pct_of_allocatable_capital", "value": 12},
+                "maxOpenPositions": 1,
+            },
+            top_n=4,
+            risk_profile_name="aggressive",
+        ),
+        rebalance_ts=datetime(2026, 3, 3, 14, 30, tzinfo=timezone.utc),
+    )
+
+    selected = ranked[ranked["selected"]]
+    assert selected["symbol"].tolist() == ["AAPL"]
+    assert selected["target_weight"].tolist() == pytest.approx([0.08])
 
 
 def test_target_quantities_reject_long_only_overallocation() -> None:

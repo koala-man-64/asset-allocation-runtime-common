@@ -14,6 +14,7 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from asset_allocation_contracts.strategy import StrategyPositionPolicy
 from asset_allocation_runtime_common import BACKTEST_RESULTS_SCHEMA_VERSION, persist_backtest_results
 
 from asset_allocation_runtime_common.backtest_repository import BacktestRepository
@@ -481,26 +482,26 @@ def _empty_ranking_frame() -> pd.DataFrame:
 
 def _validate_strategy_execution_policy(definition: ResolvedBacktestDefinition) -> None:
     strategy_config = definition.strategy_config
-    if not getattr(strategy_config, "longOnly", True):
+    if not strategy_config.longOnly:
         raise ValueError("Strategy backtests only support longOnly=true until short accounting is implemented.")
 
-    policy = getattr(strategy_config, "positionPolicy", None)
+    policy = _position_policy(definition)
     if policy is None:
         return
 
-    allowed_asset_classes = set(getattr(policy, "allowedAssetClasses", None) or ["equity"])
+    allowed_asset_classes = set(policy.allowedAssetClasses or ["equity"])
     if "equity" not in allowed_asset_classes:
         raise ValueError("Strategy backtests support equity execution only; positionPolicy.allowedAssetClasses must include 'equity'.")
 
 
-def _position_policy(definition: ResolvedBacktestDefinition) -> Any | None:
-    return getattr(definition.strategy_config, "positionPolicy", None)
+def _position_policy(definition: ResolvedBacktestDefinition) -> StrategyPositionPolicy | None:
+    return definition.strategy_config.positionPolicy
 
 
 def _target_selection_count(definition: ResolvedBacktestDefinition, available_count: int) -> int:
     policy = _position_policy(definition)
     top_n = min(int(definition.strategy_config.topN), int(available_count))
-    max_open_positions = getattr(policy, "maxOpenPositions", None) if policy is not None else None
+    max_open_positions = policy.maxOpenPositions if policy is not None else None
     if max_open_positions is not None:
         top_n = min(top_n, int(max_open_positions))
     return max(top_n, 0)
@@ -516,11 +517,11 @@ def _target_size_for_selection(
         return 0.0, None
 
     policy = _position_policy(definition)
-    if policy is None or getattr(policy, "targetPositionSize", None) is None:
+    if policy is None or policy.targetPositionSize is None:
         return float(target_weight_multiplier) / selected_count, None
 
     target_size = policy.targetPositionSize
-    max_size = getattr(policy, "maxPositionSize", None)
+    max_size = policy.maxPositionSize
     if target_size.mode == "pct_of_allocatable_capital":
         target_weight = float(target_weight_multiplier) * (float(target_size.value) / 100.0)
         if max_size is not None and max_size.mode == "pct_of_allocatable_capital":
@@ -555,7 +556,7 @@ def _apply_position_size_cap(
     definition: ResolvedBacktestDefinition,
 ) -> float:
     policy = _position_policy(definition)
-    max_size = getattr(policy, "maxPositionSize", None) if policy is not None else None
+    max_size = policy.maxPositionSize if policy is not None else None
     if max_size is None:
         return target_notional
     if max_size.mode == "pct_of_allocatable_capital":
