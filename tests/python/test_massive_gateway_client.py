@@ -12,7 +12,13 @@ from asset_allocation_runtime_common.shared_core.massive_gateway_client import (
 )
 
 
-def _build_client(*, transport: httpx.BaseTransport, retry_attempts: int = 1) -> MassiveGatewayClient:
+def _build_client(
+    *,
+    transport: httpx.BaseTransport,
+    retry_attempts: int = 1,
+    circuit_failure_threshold: int = 3,
+    circuit_open_seconds: float = 60.0,
+) -> MassiveGatewayClient:
     http_client = httpx.Client(transport=transport, timeout=httpx.Timeout(5.0), trust_env=False)
     return MassiveGatewayClient(
         MassiveGatewayClientConfig(
@@ -24,6 +30,8 @@ def _build_client(*, transport: httpx.BaseTransport, retry_attempts: int = 1) ->
             request_retry_attempts=retry_attempts,
             request_retry_base_delay_seconds=1.0,
             request_retry_max_delay_seconds=10.0,
+            circuit_breaker_failure_threshold=circuit_failure_threshold,
+            circuit_breaker_open_seconds=circuit_open_seconds,
         ),
         http_client=http_client,
         access_token_provider=lambda: "oidc-token",
@@ -85,3 +93,55 @@ def test_massive_unavailable_detail_and_payload_are_redacted() -> None:
     assert "provider-secret" not in str(exc_info.value)
     assert "provider-secret" not in str(exc_info.value.detail)
     assert "provider-secret" not in str(exc_info.value.payload)
+
+
+def test_massive_timeout_circuit_fails_fast_after_timeout() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("timeout apiKey=provider-secret")
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(MassiveGatewayUnavailableError):
+            client.get_tickers()
+        with pytest.raises(MassiveGatewayUnavailableError) as exc_info:
+            client.get_tickers()
+    finally:
+        client.close()
+
+    assert calls == 1
+    assert "timeout circuit breaker is open" in str(exc_info.value)
+    assert exc_info.value.payload["retry_after_seconds"] > 0
+
+
+def test_massive_ordinary_5xx_does_not_open_timeout_circuit() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"detail": "gateway warming"})
+
+    client = _build_client(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=1,
+        circuit_failure_threshold=1,
+        circuit_open_seconds=60.0,
+    )
+    try:
+        with pytest.raises(MassiveGatewayUnavailableError):
+            client.get_tickers()
+        with pytest.raises(MassiveGatewayUnavailableError):
+            client.get_tickers()
+    finally:
+        client.close()
+
+    assert calls == 2

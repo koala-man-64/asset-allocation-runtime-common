@@ -19,6 +19,11 @@ from asset_allocation_runtime_common.shared_core.redaction import (
     redact_secrets,
     redact_text,
 )
+from asset_allocation_runtime_common.shared_core.timeout_circuit_breaker import (
+    TimeoutCircuitBreakerConfig,
+    TimeoutCircuitOpenState,
+    get_timeout_circuit,
+)
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 60.0
@@ -33,6 +38,8 @@ _DEFAULT_API_READINESS_SLEEP_SECONDS = 10.0
 _DEFAULT_REQUEST_RETRY_ATTEMPTS = 3
 _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS = 1.0
 _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS = 8.0
+_DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
+_DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 300.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 _RETRYABLE_REQUEST_STATUS_CODES = {408, 425, 500, 502, 503, 504}
@@ -120,6 +127,8 @@ class QuiverGatewayClientConfig:
     request_retry_attempts: int = _DEFAULT_REQUEST_RETRY_ATTEMPTS
     request_retry_base_delay_seconds: float = _DEFAULT_REQUEST_RETRY_BASE_DELAY_SECONDS
     request_retry_max_delay_seconds: float = _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS
+    circuit_breaker_failure_threshold: int = _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD
+    circuit_breaker_open_seconds: float = _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS
 
 
 class QuiverGatewayClient:
@@ -140,6 +149,14 @@ class QuiverGatewayClient:
         self._readiness_lock = threading.Lock()
         self._readiness_attempted = False
         self._readiness_succeeded = not config.readiness_enabled
+        self._timeout_circuit_config = TimeoutCircuitBreakerConfig(
+            failure_threshold=config.circuit_breaker_failure_threshold,
+            open_seconds=config.circuit_breaker_open_seconds,
+        )
+        self._timeout_circuit = get_timeout_circuit(
+            provider="quiver-gateway",
+            scope_key=self.config.base_url,
+        )
 
     @staticmethod
     def from_env() -> "QuiverGatewayClient":
@@ -173,6 +190,14 @@ class QuiverGatewayClient:
         request_retry_max_delay_seconds = max(
             request_retry_base_delay_seconds,
             _env_float("QUIVER_GATEWAY_RETRY_MAX_SECONDS", _DEFAULT_REQUEST_RETRY_MAX_DELAY_SECONDS),
+        )
+        circuit_breaker_failure_threshold = max(
+            1,
+            _env_int("QUIVER_GATEWAY_CIRCUIT_FAILURE_THRESHOLD", _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD),
+        )
+        circuit_breaker_open_seconds = max(
+            0.0,
+            _env_float("QUIVER_GATEWAY_CIRCUIT_OPEN_SECONDS", _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS),
         )
 
         return QuiverGatewayClient(
@@ -212,6 +237,8 @@ class QuiverGatewayClient:
                 request_retry_attempts=request_retry_attempts,
                 request_retry_base_delay_seconds=request_retry_base_delay_seconds,
                 request_retry_max_delay_seconds=request_retry_max_delay_seconds,
+                circuit_breaker_failure_threshold=circuit_breaker_failure_threshold,
+                circuit_breaker_open_seconds=circuit_breaker_open_seconds,
             )
         )
 
@@ -381,6 +408,45 @@ class QuiverGatewayClient:
         lowered = detail.lower()
         return "disabled" in lowered and ("provider" in lowered or "quiver" in lowered or "gateway" in lowered)
 
+    def _raise_if_timeout_circuit_open(self, *, path: str) -> None:
+        state = self._timeout_circuit.before_call(self._timeout_circuit_config)
+        if state is None:
+            return
+        raise QuiverGatewayUnavailableError(
+            "Quiver gateway timeout circuit breaker is open.",
+            status_code=503,
+            detail=f"Circuit remains open for {state.retry_after_seconds:.1f} seconds.",
+            payload=self._timeout_circuit_payload(path=path, state=state),
+        )
+
+    def _record_timeout_circuit_response(self) -> None:
+        self._timeout_circuit.record_non_timeout_response()
+
+    def _record_timeout_circuit_timeout(self, *, path: str, reason: str) -> Optional[TimeoutCircuitOpenState]:
+        return self._timeout_circuit.record_timeout(
+            self._timeout_circuit_config,
+            reason=reason,
+            path=path,
+        )
+
+    def _timeout_circuit_payload(
+        self,
+        *,
+        path: str,
+        state: Optional[TimeoutCircuitOpenState],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "path": path,
+            "circuit_failure_threshold": int(self._timeout_circuit_config.failure_threshold),
+            "circuit_open_seconds": float(self._timeout_circuit_config.open_seconds),
+        }
+        if state is not None:
+            payload["retry_after_seconds"] = round(float(state.retry_after_seconds), 3)
+            payload["timeout_count"] = int(state.timeout_count)
+            if state.last_reason:
+                payload["last_timeout_reason"] = state.last_reason
+        return payload
+
     def _request_json(self, path: str, *, params: Optional[dict[str, Any]] = None) -> Any:
         url = f"{self.config.base_url.rstrip('/')}/{path.lstrip('/')}"
         request_params = {k: v for k, v in dict(params or {}).items() if v is not None}
@@ -388,6 +454,7 @@ class QuiverGatewayClient:
         delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
 
         for attempt in range(1, attempts + 1):
+            self._raise_if_timeout_circuit_open(path=path)
             if not self._ensure_gateway_ready():
                 raise QuiverGatewayUnavailableError(
                     "Asset Allocation API gateway for Quiver is not ready.",
@@ -412,11 +479,12 @@ class QuiverGatewayClient:
                     delay_seconds = self._retry_request_delay(delay_seconds)
                     self._reset_gateway_state()
                     continue
+                timeout_state = self._record_timeout_circuit_timeout(path=path, reason="timeout_exception")
                 raise QuiverGatewayUnavailableError(
                     "Timed out calling the Asset Allocation Quiver gateway.",
                     status_code=504,
                     detail="Gateway request timed out.",
-                    payload={"path": path},
+                    payload=self._timeout_circuit_payload(path=path, state=timeout_state),
                 ) from redact_exception_cause(exc)
             except httpx.TransportError as exc:
                 if attempt < attempts:
@@ -445,6 +513,7 @@ class QuiverGatewayClient:
                 ) from redact_exception_cause(exc)
 
             if response.status_code < 400:
+                self._record_timeout_circuit_response()
                 try:
                     return response.json()
                 except Exception as exc:
@@ -481,6 +550,19 @@ class QuiverGatewayClient:
                 self._reset_gateway_state()
                 continue
 
+            if response.status_code in {408, 504}:
+                timeout_state = self._record_timeout_circuit_timeout(
+                    path=path,
+                    reason=f"status_{response.status_code}",
+                )
+                raise QuiverGatewayUnavailableError(
+                    detail or "Gateway request timed out.",
+                    status_code=response.status_code,
+                    detail=detail,
+                    payload={**payload, **self._timeout_circuit_payload(path=path, state=timeout_state)},
+                )
+
+            self._record_timeout_circuit_response()
             if response.status_code in {401, 403}:
                 raise QuiverGatewayAuthError(
                     detail or "Unauthorized.",

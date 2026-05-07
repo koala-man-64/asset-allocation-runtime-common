@@ -19,6 +19,11 @@ from asset_allocation_runtime_common.shared_core.redaction import (
     redact_secrets,
     redact_text,
 )
+from asset_allocation_runtime_common.shared_core.timeout_circuit_breaker import (
+    TimeoutCircuitBreakerConfig,
+    TimeoutCircuitOpenState,
+    get_timeout_circuit,
+)
 
 logger = logging.getLogger(__name__)
 _MIN_API_GATEWAY_TIMEOUT_SECONDS = 600.0
@@ -37,7 +42,7 @@ _DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
 _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 300.0
 _API_WARMUP_PROBE_PATH = "/healthz"
 _RETRYABLE_WARMUP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
-_RETRYABLE_REQUEST_STATUS_CODES = {502, 503, 504}
+_RETRYABLE_REQUEST_STATUS_CODES = {408, 502, 503, 504}
 _LISTING_STATUS_CSV_HEADERS = frozenset({"symbol", "name"})
 _THROTTLE_TEXT_MARKERS = (
     "api call frequency",
@@ -162,9 +167,14 @@ class AlphaVantageGatewayClient:
         self._readiness_lock = threading.Lock()
         self._readiness_attempted = False
         self._readiness_succeeded = not config.readiness_enabled
-        self._circuit_lock = threading.Lock()
-        self._circuit_failure_count = 0
-        self._circuit_open_until_monotonic = 0.0
+        self._timeout_circuit_config = TimeoutCircuitBreakerConfig(
+            failure_threshold=config.circuit_breaker_failure_threshold,
+            open_seconds=config.circuit_breaker_open_seconds,
+        )
+        self._timeout_circuit = get_timeout_circuit(
+            provider="alpha-vantage-gateway",
+            scope_key=self.config.base_url,
+        )
 
     @staticmethod
     def from_env() -> "AlphaVantageGatewayClient":
@@ -362,7 +372,6 @@ class AlphaVantageGatewayClient:
                 detail=detail,
                 payload=payload,
             )
-        self._record_circuit_failure(path=path, reason="invalid_csv_payload")
         return AlphaVantageGatewayUnavailableError(
             "API gateway returned a non-CSV Alpha Vantage payload.",
             status_code=502,
@@ -559,45 +568,44 @@ class AlphaVantageGatewayClient:
         jitter = random.uniform(0.0, min(current * 0.25, max_delay))
         return min(max_delay, current + jitter)
 
-    def _raise_if_circuit_open(self, *, path: str) -> None:
-        now = time.monotonic()
-        with self._circuit_lock:
-            open_until = self._circuit_open_until_monotonic
-            if open_until <= 0.0:
-                return
-            if now >= open_until:
-                self._circuit_open_until_monotonic = 0.0
-                self._circuit_failure_count = 0
-                return
-            remaining = max(0.0, open_until - now)
-
+    def _raise_if_timeout_circuit_open(self, *, path: str) -> None:
+        state = self._timeout_circuit.before_call(self._timeout_circuit_config)
+        if state is None:
+            return
         raise AlphaVantageGatewayUnavailableError(
-            "Alpha Vantage gateway circuit breaker is open.",
+            "Alpha Vantage gateway timeout circuit breaker is open.",
             status_code=503,
-            detail=f"Circuit remains open for {remaining:.1f} seconds.",
-            payload={"path": path, "retry_after_seconds": round(remaining, 3)},
+            detail=f"Circuit remains open for {state.retry_after_seconds:.1f} seconds.",
+            payload=self._timeout_circuit_payload(path=path, state=state),
         )
 
-    def _record_circuit_success(self) -> None:
-        with self._circuit_lock:
-            self._circuit_failure_count = 0
-            self._circuit_open_until_monotonic = 0.0
+    def _record_timeout_circuit_response(self) -> None:
+        self._timeout_circuit.record_non_timeout_response()
 
-    def _record_circuit_failure(self, *, path: str, reason: str) -> None:
-        threshold = max(1, int(self.config.circuit_breaker_failure_threshold))
-        open_seconds = max(0.0, float(self.config.circuit_breaker_open_seconds))
-        with self._circuit_lock:
-            self._circuit_failure_count += 1
-            if self._circuit_failure_count < threshold or open_seconds <= 0.0:
-                return
-            self._circuit_open_until_monotonic = time.monotonic() + open_seconds
-            logger.warning(
-                "Alpha Vantage gateway circuit breaker opened (path=%s, reason=%s, failures=%s, open_seconds=%.1f).",
-                path,
-                reason,
-                self._circuit_failure_count,
-                open_seconds,
-            )
+    def _record_timeout_circuit_timeout(self, *, path: str, reason: str) -> Optional[TimeoutCircuitOpenState]:
+        return self._timeout_circuit.record_timeout(
+            self._timeout_circuit_config,
+            reason=reason,
+            path=path,
+        )
+
+    def _timeout_circuit_payload(
+        self,
+        *,
+        path: str,
+        state: Optional[TimeoutCircuitOpenState],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "path": path,
+            "circuit_failure_threshold": int(self._timeout_circuit_config.failure_threshold),
+            "circuit_open_seconds": float(self._timeout_circuit_config.open_seconds),
+        }
+        if state is not None:
+            payload["retry_after_seconds"] = round(float(state.retry_after_seconds), 3)
+            payload["timeout_count"] = int(state.timeout_count)
+            if state.last_reason:
+                payload["last_timeout_reason"] = state.last_reason
+        return payload
 
     def _request(
         self,
@@ -612,9 +620,8 @@ class AlphaVantageGatewayClient:
         delay_seconds = max(0.0, float(self.config.request_retry_base_delay_seconds))
 
         for attempt in range(1, attempts + 1):
-            self._raise_if_circuit_open(path=path)
+            self._raise_if_timeout_circuit_open(path=path)
             if not self._ensure_gateway_ready():
-                self._record_circuit_failure(path=path, reason="readiness")
                 raise AlphaVantageGatewayUnavailableError(
                     "API gateway readiness check failed.",
                     status_code=503,
@@ -638,12 +645,12 @@ class AlphaVantageGatewayClient:
                     delay_seconds = self._retry_request_delay(delay_seconds)
                     self._reset_gateway_state()
                     continue
-                self._record_circuit_failure(path=path, reason="timeout")
+                timeout_state = self._record_timeout_circuit_timeout(path=path, reason="timeout_exception")
                 raise AlphaVantageGatewayUnavailableError(
                     f"API gateway timeout calling {path}",
                     status_code=504,
                     detail="Gateway request timed out.",
-                    payload={"path": path},
+                    payload=self._timeout_circuit_payload(path=path, state=timeout_state),
                 ) from redact_exception_cause(exc)
             except Exception as exc:
                 raise AlphaVantageGatewayError(
@@ -680,8 +687,9 @@ class AlphaVantageGatewayClient:
                             delay_seconds = self._retry_request_delay(delay_seconds)
                             self._reset_gateway_state()
                             continue
+                        self._record_timeout_circuit_response()
                         raise csv_error
-                self._record_circuit_success()
+                self._record_timeout_circuit_response()
                 return resp
 
             detail = self._extract_detail(resp)
@@ -703,6 +711,19 @@ class AlphaVantageGatewayClient:
                 self._reset_gateway_state()
                 continue
 
+            if resp.status_code in {408, 504}:
+                timeout_state = self._record_timeout_circuit_timeout(
+                    path=path,
+                    reason=f"status_{resp.status_code}",
+                )
+                raise AlphaVantageGatewayUnavailableError(
+                    detail or "Gateway request timed out.",
+                    status_code=resp.status_code,
+                    detail=detail,
+                    payload={**payload, **self._timeout_circuit_payload(path=path, state=timeout_state)},
+                )
+
+            self._record_timeout_circuit_response()
             if resp.status_code in {401, 403}:
                 raise AlphaVantageGatewayAuthError(
                     "API gateway auth failed.", status_code=resp.status_code, detail=detail, payload=payload
@@ -716,7 +737,6 @@ class AlphaVantageGatewayClient:
                     detail or "Throttled.", status_code=resp.status_code, detail=detail, payload=payload
                 )
             if resp.status_code in _RETRYABLE_REQUEST_STATUS_CODES:
-                self._record_circuit_failure(path=path, reason=f"status_{resp.status_code}")
                 raise AlphaVantageGatewayUnavailableError(
                     detail or "Gateway unavailable.", status_code=resp.status_code, detail=detail, payload=payload
                 )
